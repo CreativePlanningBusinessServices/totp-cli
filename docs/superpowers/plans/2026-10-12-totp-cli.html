@@ -1,0 +1,2479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>totp-cli — Implementation Plan</title>
+<style>
+  :root {
+    --ink: #1f2430; --muted: #5b6472; --accent: #0f6b54; --accent-soft: #e6f2ee;
+    --border: #d9dee6; --bg: #fafbfc; --card: #ffffff; --code-bg: #f2f4f7;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 2.5rem 1.5rem 4rem; background: var(--bg); color: var(--ink);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 920px; margin: 0 auto; }
+  h1 { font-size: 1.8rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.25rem; margin: 2.25rem 0 .75rem; padding-bottom: .3rem; border-bottom: 2px solid var(--accent-soft); }
+  h3 { font-size: 1.1rem; margin: 2.5rem 0 .75rem; padding: .5rem .75rem; background: var(--accent-soft); border-left: 4px solid var(--accent); border-radius: 4px; }
+  blockquote { margin: 0 0 1rem; padding: .5rem 1rem; border-left: 4px solid var(--border); color: var(--muted); }
+  code { background: var(--code-bg); border-radius: 4px; padding: .1em .35em; font: .875em/1.5 "SF Mono", ui-monospace, Menlo, Consolas, monospace; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; overflow-x: auto; margin: 0 0 1rem; font-size: .85rem; line-height: 1.45; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  table { border-collapse: collapse; width: 100%; margin: 0 0 1rem; font-size: .93rem; }
+  th, td { border: 1px solid var(--border); padding: .45rem .7rem; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); }
+  ul, ol { margin: 0 0 1rem; padding-left: 1.4rem; }
+  li { margin: .2rem 0; }
+  li.step { list-style: none; margin: 1rem 0 .4rem -1.4rem; font-size: 1rem; }
+  .box { color: var(--accent); margin-right: .3rem; }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
+  .choice-panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.5rem; margin: 1.5rem 0; text-align: center; }
+  .choice-panel a { display: block; margin: .4rem auto; max-width: 560px; padding: .6rem 1.4rem; border-radius: 8px; text-decoration: none; font-weight: 600; border: 1px solid var(--border); color: var(--ink); }
+  .choice-panel a.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .choice-panel .why { color: var(--muted); font-size: .9rem; margin: .75rem 0 0; }
+</style>
+</head>
+<body>
+<main>
+<h1>totp-cli Implementation Plan</h1>
+<div class="choice-panel">
+  <p><strong>Review this plan, then choose how to execute it:</strong></p>
+  <a class="primary" href="http://127.0.0.1:8137/pick?c=native&amp;l=Native" target="_blank">Native — I implement it in this session, one reviewer at the end (recommended)</a>
+  <a href="http://127.0.0.1:8137/pick?c=subagent&amp;l=Subagent-driven" target="_blank">Subagent-driven — fresh implementer + reviewer per task</a>
+  <a href="http://127.0.0.1:8137/pick?c=changes&amp;l=Changes" target="_blank">Changes needed — I'll describe them in chat</a>
+  <p class="why">Recommendation: Native. The 13 tasks share tightly coupled interfaces (Secret, SecretStore, Index, Outcome) and total roughly 1,000 lines; one session holding all of them avoids interface drift, and the final whole-branch review still gives an independent check before release.</p>
+</div>
+<blockquote><strong>For agentic workers:</strong> REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (<code><span class="box">&#9744;</span></code>) syntax for tracking.</blockquote>
+<p><strong>Goal:</strong> A Rust CLI, <code>totp-cli</code>, that stores TOTP secrets in the OS credential store under a name and prints the current code for that name, so the agent can answer NetSuite 2FA prompts itself.</p>
+<p><strong>Architecture:</strong> Secrets live only in the OS credential store (macOS Keychain, Windows Credential Manager) behind a <code>SecretStore</code> trait with a file-backed implementation for tests and Linux. Non-secret parameters live in <code>accounts.toml</code>. RFC 6238 is implemented directly on <code>hmac</code>/<code>sha1</code>/<code>sha2</code>. The command layer mirrors netsuite-cli: clap derive, <code>CliError</code> with fixed exit codes, <code>--json</code> output, embedded SKILL.md, self-update from GitHub Releases.</p>
+<p><strong>Tech Stack:</strong> Rust 2024 edition, clap 4, keyring 3 (<code>apple-native</code>, <code>windows-native</code>), directories 6, toml 0.8, serde/serde_json, thiserror 2, hmac 0.12, sha1 0.10, sha2 0.10, data-encoding 2, url 2, percent-encoding 2, rpassword 7, zeroize 1, self_update 0.42. Dev: assert_cmd 2, predicates 3, tempfile 3.</p>
+<p><strong>Spec:</strong> <code>docs/superpowers/specs/2026-10-12-totp-cli-design.html</code></p>
+<h2>Global Constraints</h2>
+<ul>
+<li>Binary and crate name <code>totp-cli</code>; GitHub repo <code>CreativePlanningBusinessServices/totp-cli</code>, public, created only in Task 12 after Jon approves this plan.</li>
+<li>Must build and pass tests on macOS, Windows and Linux. Credential-store backend only on macOS and Windows; Linux requires <code>TOTP_CLI_SECRET_STORE=file</code>.</li>
+<li>The secret is never printed, logged, serialised to JSON output, or given a <code>Debug</code>/<code>Display</code> impl.</li>
+<li>Exit codes: 0 success, 1 internal/I/O, 2 usage (including unknown account), 3 secret store.</li>
+<li>stdout carries only the command result; all errors go to stderr as <code>error: &lt;message&gt;</code>, or <code>{"error":"&lt;message&gt;","exit_code":N}</code> under <code>--json</code>.</li>
+<li>Defaults: 6 digits, 30-second period, SHA-1. Digits 6–8, period ≥ 1. Names 1–64 chars from <code>[A-Za-z0-9._-]</code>.</li>
+<li><code>skills/totp-cli/SKILL.md</code> is embedded with <code>include_str!</code> and forced to LF via <code>.gitattributes</code>.</li>
+<li>Jon's code style: descriptive names, no single-letter variables, functions top-down (highest level first), comments only where something is non-obvious, never <code>as unknown as</code>-style double casts.</li>
+<li>Commit messages end with <code>Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;</code>. Do not push or create the GitHub repo before Task 12.</li>
+</ul>
+<h2>Review Focus</h2>
+<ol>
+<li>A pasted secret with lowercase letters, spaces and no <code>=</code> padding must be accepted and stored normalised; a secret containing <code>1</code>, <code>8</code> or <code>0</code> must be rejected with exit 2, not stored. Pinned in Task 3.</li>
+<li><code>--min-remaining</code> equal to or above the period would never be satisfied; it must be rejected with exit 2 rather than hang. Pinned in Task 8.</li>
+<li>An account listed in <code>accounts.toml</code> whose secret is gone from the store must fail with exit 3 and a message naming <code>add --force</code>, not panic or print an empty code. Pinned in Task 8.</li>
+<li>A corrupt <code>accounts.toml</code> must fail with exit 1 and name the file path so the user can fix or delete it. Pinned in Task 5.</li>
+<li>An otpauth URI whose issuer is only in the label (<code>otpauth://totp/NetSuite:jon?...</code>), percent-encoded, must yield issuer <code>NetSuite</code>; an <code>otpauth://hotp/</code> URI must be rejected with exit 2. Pinned in Task 4.</li>
+</ol>
+<hr>
+<h2>File structure</h2>
+<table>
+<tr><th>Path</th><th>Responsibility</th></tr>
+<tr><td><code>Cargo.toml</code>, <code>.gitattributes</code>, <code>.gitignore</code></td><td>Crate manifest, LF rule for the skill, ignores</td></tr>
+<tr><td><code>src/main.rs</code></td><td>Calls <code>totp_cli::cli::cli_main()</code> and exits with its code</td></tr>
+<tr><td><code>src/lib.rs</code></td><td>Module declarations (lets integration tests import the crate)</td></tr>
+<tr><td><code>src/error.rs</code></td><td><code>CliError { Io, Usage, Store }</code>, <code>exit_code()</code>, <code>to_json()</code></td></tr>
+<tr><td><code>src/totp.rs</code></td><td><code>Algorithm</code>, <code>hotp</code>, <code>totp</code>, <code>expires_in</code></td></tr>
+<tr><td><code>src/secret.rs</code></td><td><code>Secret</code> newtype: base32 normalisation, decoding, zeroise on drop</td></tr>
+<tr><td><code>src/otpauth.rs</code></td><td><code>ParsedUri</code>, <code>parse()</code> for <code>otpauth://totp/</code> URIs</td></tr>
+<tr><td><code>src/index.rs</code></td><td><code>AccountParams</code>, <code>Index</code> load/save, <code>config_dir()</code>, <code>validate_name()</code></td></tr>
+<tr><td><code>src/store.rs</code></td><td><code>SecretStore</code> trait, <code>FileStore</code>, <code>KeyringStore</code>, <code>open_store()</code></td></tr>
+<tr><td><code>src/output.rs</code></td><td><code>Outcome { human, json }</code> and printing</td></tr>
+<tr><td><code>src/cli.rs</code></td><td>clap definitions and <code>cli_main()</code> dispatch</td></tr>
+<tr><td><code>src/commands/{mod,add,code,list,remove,skill,update}.rs</code></td><td>One file per subcommand</td></tr>
+<tr><td><code>skills/totp-cli/SKILL.md</code></td><td>Agent usage skill, embedded into the binary</td></tr>
+<tr><td><code>tests/common/mod.rs</code></td><td><code>TestEnv</code>: temp config dir + file store + <code>assert_cmd</code> command builder</td></tr>
+<tr><td><code>tests/{add,code,list_remove,skill}_commands.rs</code></td><td>Integration tests</td></tr>
+<tr><td><code>.github/workflows/ci.yml</code>, <code>release.yml</code></td><td>CI on three OSes; release zips on <code>v*</code> tags</td></tr>
+<tr><td><code>README.md</code></td><td>Install, usage, storage notes</td></tr>
+</table>
+<hr>
+<h3 id="task-1">Task 1: Crate scaffold, error type, CI workflows</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>Cargo.toml</code>, <code>src/main.rs</code>, <code>src/lib.rs</code>, <code>src/error.rs</code>, <code>.gitattributes</code>, <code>.github/workflows/ci.yml</code>, <code>.github/workflows/release.yml</code></li>
+<li>Modify: <code>.gitignore</code> (already has <code>/target</code>)</li>
+<p><strong>Interfaces:</strong></p>
+<li>Produces: <code>CliError::{Io(String), Usage(String), Store(String)}</code>, <code>CliError::exit_code() -&gt; u8</code>, <code>CliError::to_json() -&gt; serde_json::Value</code>.</li>
+<li class="step">[ ] <strong>Step 1: Write Cargo.toml</strong></li>
+</ul>
+<pre><code class="lang-toml">[package]
+name = "totp-cli"
+version = "0.1.0"
+edition = "2024"
+description = "Generate TOTP codes from secrets kept in the OS credential store"
+license = "MIT"
+repository = "https://github.com/CreativePlanningBusinessServices/totp-cli"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
+directories = "6"
+toml = "0.8"
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
+data-encoding = "2"
+url = "2"
+percent-encoding = "2"
+rpassword = "7"
+zeroize = "1"
+self_update = { version = "0.42", default-features = false, features = ["rustls", "archive-zip", "compression-zip-deflate"] }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 2: Write the failing exit-code test inside src/error.rs</strong></li>
+</ul>
+<pre><code class="lang-rust">use serde_json::{Value, json};
+
+#[derive(Debug, thiserror::Error)]
+pub enum CliError {
+    /// Index file or other local I/O problem.
+    #[error("{0}")]
+    Io(String),
+    /// Bad arguments, bad secret or URI, unknown or duplicate account.
+    #[error("{0}")]
+    Usage(String),
+    /// The OS credential store (or the file store) failed or lacks the secret.
+    #[error("{0}")]
+    Store(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_codes_match_error_kinds() {
+        assert_eq!(CliError::Io("disk".into()).exit_code(), 1);
+        assert_eq!(CliError::Usage("bad name".into()).exit_code(), 2);
+        assert_eq!(CliError::Store("keychain".into()).exit_code(), 3);
+    }
+
+    #[test]
+    fn json_carries_message_and_exit_code() {
+        let error = CliError::Usage("no account named 'x'".into());
+        assert_eq!(
+            error.to_json(),
+            json!({"error": "no account named 'x'", "exit_code": 2})
+        );
+    }
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 3: Add lib.rs and main.rs so the crate compiles, then run the test to see it fail</strong></li>
+<p><code>src/lib.rs</code>:</p>
+</ul>
+<pre><code class="lang-rust">pub mod error;</code></pre>
+<p><code>src/main.rs</code>:</p>
+<pre><code class="lang-rust">fn main() {
+    std::process::exit(i32::from(totp_cli::cli::cli_main()));
+}</code></pre>
+<p>For now <code>cli</code> does not exist, so make main.rs temporarily <code>fn main() {}</code> and restore the line above in Task 7.</p>
+<p>Run: <code>cargo test --lib</code> Expected: compile error, <code>no method named exit_code</code>.</p>
+<ul>
+<li class="step">[ ] <strong>Step 4: Implement exit_code and to_json above the tests module</strong></li>
+</ul>
+<pre><code class="lang-rust">impl CliError {
+    pub fn exit_code(&amp;self) -&gt; u8 {
+        match self {
+            CliError::Io(_) =&gt; 1,
+            CliError::Usage(_) =&gt; 2,
+            CliError::Store(_) =&gt; 3,
+        }
+    }
+
+    pub fn to_json(&amp;self) -&gt; Value {
+        json!({"error": self.to_string(), "exit_code": self.exit_code()})
+    }
+}</code></pre>
+<p>Run: <code>cargo test --lib</code> Expected: 2 passed.</p>
+<ul>
+<li class="step">[ ] <strong>Step 5: Add .gitattributes and the two workflows</strong></li>
+<p><code>.gitattributes</code>:</p>
+</ul>
+<pre><code># SKILL.md is embedded via include_str! and written back out by `skill install`;
+# force LF so the bytes match on every platform.
+skills/totp-cli/SKILL.md text eol=lf</code></pre>
+<p><code>.github/workflows/ci.yml</code>:</p>
+<pre><code class="lang-yaml">name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Integration tests must never touch a real keychain or credential manager.
+  TOTP_CLI_SECRET_STORE: file
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings</code></pre>
+<p><code>.github/workflows/release.yml</code>:</p>
+<pre><code class="lang-yaml">name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd target/${{ matrix.target }}/release
+          zip totp-cli-${{ github.ref_name }}-${{ matrix.target }}.zip totp-cli
+          mv totp-cli-${{ github.ref_name }}-${{ matrix.target }}.zip "$GITHUB_WORKSPACE"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/totp-cli.exe" -DestinationPath "totp-cli-${{ github.ref_name }}-${{ matrix.target }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: totp-cli-${{ matrix.target }}
+          path: totp-cli-${{ github.ref_name }}-${{ matrix.target }}.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 6: Build, format and commit</strong></li>
+<p>Run: <code>cargo build &amp;&amp; cargo fmt --check &amp;&amp; cargo clippy --all-targets -- -D warnings</code> Expected: builds clean (unused-import warnings in main.rs are acceptable only if clippy stays silent; otherwise keep main.rs as the empty <code>fn main() {}</code>).</p>
+</ul>
+<pre><code class="lang-bash">git add Cargo.toml Cargo.lock src .gitattributes .github
+git commit -m "Scaffold totp-cli crate with error type and CI workflows
+
+Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
+<hr>
+<h3 id="task-2">Task 2: TOTP core (RFC 4226 / RFC 6238)</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>src/totp.rs</code></li>
+<li>Modify: <code>src/lib.rs</code> (add <code>pub mod totp;</code>)</li>
+<p><strong>Interfaces:</strong></p>
+<li>Produces:</li>
+<ul>
+<li><code>pub enum Algorithm { Sha1, Sha256, Sha512 }</code> deriving <code>Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum</code> with <code>#[serde(rename_all = "lowercase")]</code> and <code>#[value(rename_all = "lowercase")]</code>; <code>impl FromStr for Algorithm</code> accepting <code>sha1</code>, <code>SHA1</code>, <code>SHA-1</code>, <code>sha256</code>, <code>SHA-256</code>, <code>sha512</code>, <code>SHA-512</code>.</li>
+<li><code>pub fn hotp(key: &amp;[u8], counter: u64, digits: u32, algorithm: Algorithm) -&gt; String</code></li>
+<li><code>pub fn totp(key: &amp;[u8], unix_time: u64, period: u64, digits: u32, algorithm: Algorithm) -&gt; String</code></li>
+<li><code>pub fn expires_in(unix_time: u64, period: u64) -&gt; u64</code></li>
+</ul>
+<li class="step">[ ] <strong>Step 1: Write the failing tests at the bottom of src/totp.rs</strong></li>
+</ul>
+<pre><code class="lang-rust">#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SHA1_KEY: &amp;[u8] = b"12345678901234567890";
+    const SHA256_KEY: &amp;[u8] = b"12345678901234567890123456789012";
+    const SHA512_KEY: &amp;[u8] =
+        b"1234567890123456789012345678901234567890123456789012345678901234";
+
+    #[test]
+    fn hotp_matches_rfc4226_appendix_d() {
+        let expected = [
+            "755224", "287082", "359152", "969429", "338314", "254676", "287922", "162583",
+            "399871", "520489",
+        ];
+        for (counter, code) in expected.iter().enumerate() {
+            assert_eq!(hotp(SHA1_KEY, counter as u64, 6, Algorithm::Sha1), *code);
+        }
+    }
+
+    #[test]
+    fn totp_matches_rfc6238_appendix_b() {
+        let vectors: [(u64, &amp;str, &amp;str, &amp;str); 6] = [
+            (59, "94287082", "46119246", "90693936"),
+            (1_111_111_109, "07081804", "68084774", "25091201"),
+            (1_111_111_111, "14050471", "67062674", "99943326"),
+            (1_234_567_890, "89005924", "91819424", "93441116"),
+            (2_000_000_000, "69279037", "90698825", "38618901"),
+            (20_000_000_000, "65353130", "77737706", "47863826"),
+        ];
+        for (time, sha1_code, sha256_code, sha512_code) in vectors {
+            assert_eq!(totp(SHA1_KEY, time, 30, 8, Algorithm::Sha1), sha1_code);
+            assert_eq!(totp(SHA256_KEY, time, 30, 8, Algorithm::Sha256), sha256_code);
+            assert_eq!(totp(SHA512_KEY, time, 30, 8, Algorithm::Sha512), sha512_code);
+        }
+    }
+
+    #[test]
+    fn six_digit_codes_are_zero_padded() {
+        assert_eq!(totp(SHA1_KEY, 1_111_111_109, 30, 6, Algorithm::Sha1), "081804");
+    }
+
+    #[test]
+    fn expires_in_counts_down_to_the_period_boundary() {
+        assert_eq!(expires_in(59, 30), 1);
+        assert_eq!(expires_in(60, 30), 30);
+        assert_eq!(expires_in(75, 30), 15);
+    }
+
+    #[test]
+    fn algorithm_parses_common_spellings() {
+        assert_eq!("sha1".parse::&lt;Algorithm&gt;().unwrap(), Algorithm::Sha1);
+        assert_eq!("SHA-256".parse::&lt;Algorithm&gt;().unwrap(), Algorithm::Sha256);
+        assert_eq!("Sha512".parse::&lt;Algorithm&gt;().unwrap(), Algorithm::Sha512);
+        assert!("md5".parse::&lt;Algorithm&gt;().is_err());
+    }
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<p>Run: <code>cargo test --lib totp</code> Expected: compile errors, <code>Algorithm</code>/<code>hotp</code>/<code>totp</code>/<code>expires_in</code> not found.</p>
+<li class="step">[ ] <strong>Step 3: Implement src/totp.rs above the tests</strong></li>
+</ul>
+<pre><code class="lang-rust">use std::str::FromStr;
+
+use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
+use sha1::Sha1;
+use sha2::{Sha256, Sha512};
+
+use crate::error::CliError;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+#[value(rename_all = "lowercase")]
+pub enum Algorithm {
+    Sha1,
+    Sha256,
+    Sha512,
+}
+
+pub fn totp(key: &amp;[u8], unix_time: u64, period: u64, digits: u32, algorithm: Algorithm) -&gt; String {
+    hotp(key, unix_time / period, digits, algorithm)
+}
+
+pub fn expires_in(unix_time: u64, period: u64) -&gt; u64 {
+    period - (unix_time % period)
+}
+
+pub fn hotp(key: &amp;[u8], counter: u64, digits: u32, algorithm: Algorithm) -&gt; String {
+    let digest = hmac_digest(key, &amp;counter.to_be_bytes(), algorithm);
+    // RFC 4226 §5.3 dynamic truncation: the low nibble of the last byte picks a 4-byte window.
+    let offset = usize::from(digest[digest.len() - 1] &amp; 0x0f);
+    let window = [
+        digest[offset] &amp; 0x7f,
+        digest[offset + 1],
+        digest[offset + 2],
+        digest[offset + 3],
+    ];
+    let truncated = u32::from_be_bytes(window);
+    let code = truncated % 10u32.pow(digits);
+    format!("{code:0width$}", width = digits as usize)
+}
+
+fn hmac_digest(key: &amp;[u8], message: &amp;[u8], algorithm: Algorithm) -&gt; Vec&lt;u8&gt; {
+    match algorithm {
+        Algorithm::Sha1 =&gt; {
+            let mut mac = Hmac::&lt;Sha1&gt;::new_from_slice(key).expect("HMAC accepts any key length");
+            mac.update(message);
+            mac.finalize().into_bytes().to_vec()
+        }
+        Algorithm::Sha256 =&gt; {
+            let mut mac = Hmac::&lt;Sha256&gt;::new_from_slice(key).expect("HMAC accepts any key length");
+            mac.update(message);
+            mac.finalize().into_bytes().to_vec()
+        }
+        Algorithm::Sha512 =&gt; {
+            let mut mac = Hmac::&lt;Sha512&gt;::new_from_slice(key).expect("HMAC accepts any key length");
+            mac.update(message);
+            mac.finalize().into_bytes().to_vec()
+        }
+    }
+}
+
+impl FromStr for Algorithm {
+    type Err = CliError;
+
+    fn from_str(text: &amp;str) -&gt; Result&lt;Self, Self::Err&gt; {
+        match text.to_ascii_lowercase().replace('-', "").as_str() {
+            "sha1" =&gt; Ok(Algorithm::Sha1),
+            "sha256" =&gt; Ok(Algorithm::Sha256),
+            "sha512" =&gt; Ok(Algorithm::Sha512),
+            other =&gt; Err(CliError::Usage(format!(
+                "unsupported algorithm '{other}'; use sha1, sha256 or sha512"
+            ))),
+        }
+    }
+}</code></pre>
+<p>Add <code>pub mod totp;</code> to <code>src/lib.rs</code>.</p>
+<ul>
+<li class="step">[ ] <strong>Step 4: Run tests</strong></li>
+<p>Run: <code>cargo test --lib totp</code> Expected: 5 passed.</p>
+<li class="step">[ ] <strong>Step 5: Commit</strong></li>
+</ul>
+<pre><code class="lang-bash">git add src/totp.rs src/lib.rs
+git commit -m "Add RFC 4226/6238 HOTP and TOTP core with RFC test vectors
+
+Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
+<hr>
+<h3 id="task-3">Task 3: Secret newtype with lenient base32</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>src/secret.rs</code></li>
+<li>Modify: <code>src/lib.rs</code> (add <code>pub mod secret;</code>)</li>
+<p><strong>Interfaces:</strong></p>
+<li>Produces:</li>
+<ul>
+<li><code>pub struct Secret(Zeroizing&lt;String&gt;)</code> — no <code>Debug</code>, no <code>Display</code>, no <code>Serialize</code>.</li>
+<li><code>Secret::parse(input: &amp;str) -&gt; Result&lt;Secret, CliError&gt;</code> (Usage error on bad input)</li>
+<li><code>Secret::from_stored(stored: &amp;str) -&gt; Result&lt;Secret, CliError&gt;</code> (Store error on bad input)</li>
+<li><code>Secret::as_base32(&amp;self) -&gt; &amp;str</code> (normalised, uppercase, unpadded)</li>
+<li><code>Secret::key_bytes(&amp;self) -&gt; Zeroizing&lt;Vec&lt;u8&gt;&gt;</code></li>
+</ul>
+<li class="step">[ ] <strong>Step 1: Write the failing tests</strong></li>
+</ul>
+<pre><code class="lang-rust">#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalises_case_whitespace_dashes_and_padding() {
+        let secret = Secret::parse(" gezd gnbv-gy3t qojq gezdgnbvgy3tqojq== ").unwrap();
+        assert_eq!(secret.as_base32(), "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ");
+        assert_eq!(secret.key_bytes().as_slice(), b"12345678901234567890");
+    }
+
+    #[test]
+    fn rejects_characters_outside_the_base32_alphabet() {
+        let error = Secret::parse("GEZDGNBV0189").unwrap_err();
+        assert!(matches!(error, CliError::Usage(_)));
+        assert!(error.to_string().contains("base32"));
+    }
+
+    #[test]
+    fn rejects_empty_input() {
+        assert!(matches!(Secret::parse("   "), Err(CliError::Usage(_))));
+    }
+
+    #[test]
+    fn stored_values_that_fail_to_decode_are_store_errors() {
+        assert!(matches!(Secret::from_stored("not!base32"), Err(CliError::Store(_))));
+    }
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<p>Run: <code>cargo test --lib secret</code> Expected: compile error, <code>Secret</code> not found.</p>
+<li class="step">[ ] <strong>Step 3: Implement</strong></li>
+</ul>
+<pre><code class="lang-rust">use data_encoding::BASE32_NOPAD;
+use zeroize::Zeroizing;
+
+use crate::error::CliError;
+
+/// A TOTP shared secret as normalised base32. Deliberately has no Debug/Display so it
+/// cannot leak through logging or `{:?}` formatting.
+pub struct Secret(Zeroizing&lt;String&gt;);
+
+impl Secret {
+    pub fn parse(input: &amp;str) -&gt; Result&lt;Secret, CliError&gt; {
+        Self::decode(input).map_err(CliError::Usage)
+    }
+
+    pub fn from_stored(stored: &amp;str) -&gt; Result&lt;Secret, CliError&gt; {
+        Self::decode(stored)
+            .map_err(|message| CliError::Store(format!("stored secret is unreadable: {message}")))
+    }
+
+    pub fn as_base32(&amp;self) -&gt; &amp;str {
+        &amp;self.0
+    }
+
+    pub fn key_bytes(&amp;self) -&gt; Zeroizing&lt;Vec&lt;u8&gt;&gt; {
+        Zeroizing::new(
+            BASE32_NOPAD
+                .decode(self.0.as_bytes())
+                .expect("Secret only holds base32 that decoded at construction"),
+        )
+    }
+
+    fn decode(input: &amp;str) -&gt; Result&lt;Secret, String&gt; {
+        let normalised: String = input
+            .chars()
+            .filter(|character| !character.is_whitespace() &amp;&amp; *character != '-' &amp;&amp; *character != '=')
+            .map(|character| character.to_ascii_uppercase())
+            .collect();
+        if normalised.is_empty() {
+            return Err("secret is empty".into());
+        }
+        BASE32_NOPAD
+            .decode(normalised.as_bytes())
+            .map_err(|_| "secret is not valid base32 (letters A-Z and digits 2-7)".to_string())?;
+        Ok(Secret(Zeroizing::new(normalised)))
+    }
+}</code></pre>
+<p>Add <code>pub mod secret;</code> to <code>src/lib.rs</code>.</p>
+<ul>
+<li class="step">[ ] <strong>Step 4: Run tests</strong></li>
+<p>Run: <code>cargo test --lib secret</code> Expected: 4 passed.</p>
+<li class="step">[ ] <strong>Step 5: Commit</strong></li>
+</ul>
+<pre><code class="lang-bash">git add src/secret.rs src/lib.rs
+git commit -m "Add Secret newtype with lenient base32 normalisation
+
+Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
+<hr>
+<h3 id="task-4">Task 4: otpauth URI parser</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>src/otpauth.rs</code></li>
+<li>Modify: <code>src/lib.rs</code> (add <code>pub mod otpauth;</code>)</li>
+<p><strong>Interfaces:</strong></p>
+<li>Consumes: <code>Secret::parse</code>, <code>Algorithm: FromStr</code>, <code>CliError::Usage</code>.</li>
+<li>Produces:</li>
+<ul>
+<li><code>pub struct ParsedUri { pub secret: Secret, pub issuer: Option&lt;String&gt;, pub digits: Option&lt;u32&gt;, pub period: Option&lt;u64&gt;, pub algorithm: Option&lt;Algorithm&gt; }</code></li>
+<li><code>pub fn parse(uri: &amp;str) -&gt; Result&lt;ParsedUri, CliError&gt;</code></li>
+</ul>
+<li class="step">[ ] <strong>Step 1: Write the failing tests</strong></li>
+</ul>
+<pre><code class="lang-rust">#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_every_parameter() {
+        let parsed = parse(
+            "otpauth://totp/NetSuite:jon%40example.com?secret=GEZDGNBVGY3TQOJQ&amp;issuer=NetSuite&amp;digits=8&amp;period=60&amp;algorithm=SHA256",
+        )
+        .unwrap();
+        assert_eq!(parsed.secret.as_base32(), "GEZDGNBVGY3TQOJQ");
+        assert_eq!(parsed.issuer.as_deref(), Some("NetSuite"));
+        assert_eq!(parsed.digits, Some(8));
+        assert_eq!(parsed.period, Some(60));
+        assert_eq!(parsed.algorithm, Some(Algorithm::Sha256));
+    }
+
+    #[test]
+    fn minimal_uri_leaves_optional_fields_none() {
+        let parsed = parse("otpauth://totp/jon?secret=GEZDGNBVGY3TQOJQ").unwrap();
+        assert_eq!(parsed.issuer, None);
+        assert_eq!(parsed.digits, None);
+        assert_eq!(parsed.period, None);
+        assert_eq!(parsed.algorithm, None);
+    }
+
+    #[test]
+    fn issuer_falls_back_to_the_percent_encoded_label_prefix() {
+        let parsed = parse("otpauth://totp/Creative%20Planning:jon?secret=GEZDGNBVGY3TQOJQ").unwrap();
+        assert_eq!(parsed.issuer.as_deref(), Some("Creative Planning"));
+    }
+
+    #[test]
+    fn rejects_hotp_other_schemes_and_missing_secret() {
+        assert!(matches!(parse("otpauth://hotp/x?secret=GEZDGNBVGY3TQOJQ&amp;counter=0"), Err(CliError::Usage(_))));
+        assert!(matches!(parse("https://example.com/?secret=GEZDGNBVGY3TQOJQ"), Err(CliError::Usage(_))));
+        assert!(matches!(parse("otpauth://totp/x?issuer=Y"), Err(CliError::Usage(_))));
+        assert!(matches!(parse("not a uri"), Err(CliError::Usage(_))));
+    }
+
+    #[test]
+    fn rejects_non_numeric_digits_and_period() {
+        assert!(matches!(parse("otpauth://totp/x?secret=GEZDGNBVGY3TQOJQ&amp;digits=six"), Err(CliError::Usage(_))));
+        assert!(matches!(parse("otpauth://totp/x?secret=GEZDGNBVGY3TQOJQ&amp;period=-1"), Err(CliError::Usage(_))));
+    }
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<p>Run: <code>cargo test --lib otpauth</code> Expected: compile error, <code>parse</code> not found.</p>
+<li class="step">[ ] <strong>Step 3: Implement</strong></li>
+</ul>
+<pre><code class="lang-rust">use percent_encoding::percent_decode_str;
+use url::Url;
+
+use crate::error::CliError;
+use crate::secret::Secret;
+use crate::totp::Algorithm;
+
+pub struct ParsedUri {
+    pub secret: Secret,
+    pub issuer: Option&lt;String&gt;,
+    pub digits: Option&lt;u32&gt;,
+    pub period: Option&lt;u64&gt;,
+    pub algorithm: Option&lt;Algorithm&gt;,
+}
+
+pub fn parse(uri: &amp;str) -&gt; Result&lt;ParsedUri, CliError&gt; {
+    let url = Url::parse(uri)
+        .map_err(|parse_error| CliError::Usage(format!("invalid otpauth URI: {parse_error}")))?;
+    if url.scheme() != "otpauth" {
+        return Err(CliError::Usage("URI must start with otpauth://totp/".into()));
+    }
+    match url.host_str() {
+        Some("totp") =&gt; {}
+        Some("hotp") =&gt; return Err(CliError::Usage("HOTP (counter-based) URIs are not supported".into())),
+        _ =&gt; return Err(CliError::Usage("URI must start with otpauth://totp/".into())),
+    }
+
+    let mut secret = None;
+    let mut issuer = None;
+    let mut digits = None;
+    let mut period = None;
+    let mut algorithm = None;
+    for (key, value) in url.query_pairs() {
+        match key.as_ref() {
+            "secret" =&gt; secret = Some(Secret::parse(&amp;value)?),
+            "issuer" =&gt; issuer = Some(value.into_owned()),
+            "digits" =&gt; digits = Some(parse_number::&lt;u32&gt;("digits", &amp;value)?),
+            "period" =&gt; period = Some(parse_number::&lt;u64&gt;("period", &amp;value)?),
+            "algorithm" =&gt; algorithm = Some(value.parse::&lt;Algorithm&gt;()?),
+            _ =&gt; {}
+        }
+    }
+
+    let secret = secret.ok_or_else(|| CliError::Usage("otpauth URI has no secret parameter".into()))?;
+    Ok(ParsedUri {
+        secret,
+        issuer: issuer.or_else(|| issuer_from_label(url.path())),
+        digits,
+        period,
+        algorithm,
+    })
+}
+
+/// The label is `/Issuer:account` (percent-encoded); the issuer prefix is optional.
+fn issuer_from_label(path: &amp;str) -&gt; Option&lt;String&gt; {
+    let label = percent_decode_str(path.trim_start_matches('/')).decode_utf8_lossy();
+    label
+        .split_once(':')
+        .map(|(issuer, _account)| issuer.trim().to_string())
+        .filter(|issuer| !issuer.is_empty())
+}
+
+fn parse_number&lt;Number: std::str::FromStr&gt;(field: &amp;str, value: &amp;str) -&gt; Result&lt;Number, CliError&gt; {
+    value
+        .parse::&lt;Number&gt;()
+        .map_err(|_| CliError::Usage(format!("otpauth URI has a non-numeric {field} '{value}'")))
+}</code></pre>
+<p>Add <code>pub mod otpauth;</code> to <code>src/lib.rs</code>.</p>
+<ul>
+<li class="step">[ ] <strong>Step 4: Run tests</strong></li>
+<p>Run: <code>cargo test --lib otpauth</code> Expected: 5 passed.</p>
+<li class="step">[ ] <strong>Step 5: Commit</strong></li>
+</ul>
+<pre><code class="lang-bash">git add src/otpauth.rs src/lib.rs
+git commit -m "Parse otpauth://totp URIs into secret and account parameters
+
+Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
+<hr>
+<h3 id="task-5">Task 5: Account index (accounts.toml)</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>src/index.rs</code></li>
+<li>Modify: <code>src/lib.rs</code> (add <code>pub mod index;</code>)</li>
+<p><strong>Interfaces:</strong></p>
+<li>Consumes: <code>Algorithm</code>, <code>CliError</code>.</li>
+<li>Produces:</li>
+<ul>
+<li><code>pub struct AccountParams { pub issuer: Option&lt;String&gt;, pub digits: u32, pub period: u64, pub algorithm: Algorithm }</code> deriving <code>Clone, Debug, PartialEq, Eq, Serialize, Deserialize</code>.</li>
+<li><code>AccountParams::validate(&amp;self) -&gt; Result&lt;(), CliError&gt;</code></li>
+<li><code>pub struct Index { pub accounts: BTreeMap&lt;String, AccountParams&gt; }</code> deriving <code>Default, Serialize, Deserialize</code>.</li>
+<li><code>Index::load(config_dir: &amp;Path) -&gt; Result&lt;Index, CliError&gt;</code>, <code>Index::save(&amp;self, config_dir: &amp;Path) -&gt; Result&lt;(), CliError&gt;</code></li>
+<li><code>pub fn config_dir() -&gt; Result&lt;PathBuf, CliError&gt;</code> honouring <code>TOTP_CLI_CONFIG_DIR</code>.</li>
+<li><code>pub fn validate_name(name: &amp;str) -&gt; Result&lt;(), CliError&gt;</code></li>
+<li><code>pub const INDEX_FILE: &amp;str = "accounts.toml";</code></li>
+</ul>
+<li class="step">[ ] <strong>Step 1: Write the failing tests</strong></li>
+</ul>
+<pre><code class="lang-rust">#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_params() -&gt; AccountParams {
+        AccountParams {
+            issuer: Some("NetSuite".into()),
+            digits: 6,
+            period: 30,
+            algorithm: Algorithm::Sha1,
+        }
+    }
+
+    #[test]
+    fn load_of_a_missing_file_is_an_empty_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let index = Index::load(dir.path()).unwrap();
+        assert!(index.accounts.is_empty());
+    }
+
+    #[test]
+    fn save_then_load_round_trips_and_sorts_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut index = Index::default();
+        index.accounts.insert("zeta".into(), sample_params());
+        index.accounts.insert("alpha".into(), AccountParams { issuer: None, ..sample_params() });
+        index.save(dir.path()).unwrap();
+
+        let written = std::fs::read_to_string(dir.path().join(INDEX_FILE)).unwrap();
+        assert!(written.contains("[accounts.alpha]"));
+        assert!(!written.contains("issuer = \"\""));
+
+        let loaded = Index::load(dir.path()).unwrap();
+        assert_eq!(loaded.accounts.keys().collect::&lt;Vec&lt;_&gt;&gt;(), vec!["alpha", "zeta"]);
+        assert_eq!(loaded.accounts["zeta"], sample_params());
+    }
+
+    #[test]
+    fn save_creates_the_config_dir_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("deeper").join("still");
+        Index::default().save(&amp;nested).unwrap();
+        let names: Vec&lt;String&gt; = std::fs::read_dir(&amp;nested)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec![INDEX_FILE.to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_index_is_owner_readable_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        Index::default().save(dir.path()).unwrap();
+        let mode = std::fs::metadata(dir.path().join(INDEX_FILE)).unwrap().permissions().mode();
+        assert_eq!(mode &amp; 0o777, 0o600);
+    }
+
+    #[test]
+    fn corrupt_index_is_an_io_error_naming_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(INDEX_FILE), "this is = not [toml").unwrap();
+        let error = Index::load(dir.path()).unwrap_err();
+        assert!(matches!(error, CliError::Io(_)));
+        assert!(error.to_string().contains(INDEX_FILE));
+    }
+
+    #[test]
+    fn config_dir_honours_the_env_override() {
+        temp_env_var("TOTP_CLI_CONFIG_DIR", "/tmp/totp-cli-test", || {
+            assert_eq!(config_dir().unwrap(), PathBuf::from("/tmp/totp-cli-test"));
+        });
+    }
+
+    #[test]
+    fn names_are_restricted_to_safe_characters() {
+        assert!(validate_name("netsuite").is_ok());
+        assert!(validate_name("ns.prod_2-b").is_ok());
+        assert!(matches!(validate_name(""), Err(CliError::Usage(_))));
+        assert!(matches!(validate_name("has space"), Err(CliError::Usage(_))));
+        assert!(matches!(validate_name("../etc"), Err(CliError::Usage(_))));
+        assert!(matches!(validate_name(&amp;"x".repeat(65)), Err(CliError::Usage(_))));
+    }
+
+    #[test]
+    fn params_enforce_digit_and_period_ranges() {
+        assert!(sample_params().validate().is_ok());
+        assert!(matches!(AccountParams { digits: 5, ..sample_params() }.validate(), Err(CliError::Usage(_))));
+        assert!(matches!(AccountParams { digits: 9, ..sample_params() }.validate(), Err(CliError::Usage(_))));
+        assert!(matches!(AccountParams { period: 0, ..sample_params() }.validate(), Err(CliError::Usage(_))));
+    }
+
+    /// Env vars are process-global; set, run, restore so parallel tests are not disturbed.
+    fn temp_env_var(key: &amp;str, value: &amp;str, body: impl FnOnce()) {
+        let previous = std::env::var_os(key);
+        // SAFETY: tests in this module that touch the environment run under this helper only.
+        unsafe { std::env::set_var(key, value) };
+        body();
+        match previous {
+            Some(old) =&gt; unsafe { std::env::set_var(key, old) },
+            None =&gt; unsafe { std::env::remove_var(key) },
+        }
+    }
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<p>Run: <code>cargo test --lib index</code> Expected: compile errors, <code>Index</code>/<code>AccountParams</code> not found.</p>
+<li class="step">[ ] <strong>Step 3: Implement</strong></li>
+</ul>
+<pre><code class="lang-rust">use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::CliError;
+use crate::totp::Algorithm;
+
+pub const INDEX_FILE: &amp;str = "accounts.toml";
+const CONFIG_DIR_ENV: &amp;str = "TOTP_CLI_CONFIG_DIR";
+const MAX_NAME_LENGTH: usize = 64;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer: Option&lt;String&gt;,
+    pub digits: u32,
+    pub period: u64,
+    pub algorithm: Algorithm,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct Index {
+    #[serde(default)]
+    pub accounts: BTreeMap&lt;String, AccountParams&gt;,
+}
+
+impl Index {
+    pub fn load(config_dir: &amp;Path) -&gt; Result&lt;Index, CliError&gt; {
+        let path = config_dir.join(INDEX_FILE);
+        let contents = match std::fs::read_to_string(&amp;path) {
+            Ok(contents) =&gt; contents,
+            Err(io_error) if io_error.kind() == std::io::ErrorKind::NotFound =&gt; {
+                return Ok(Index::default());
+            }
+            Err(io_error) =&gt; {
+                return Err(CliError::Io(format!("cannot read {}: {io_error}", path.display())));
+            }
+        };
+        toml::from_str(&amp;contents)
+            .map_err(|toml_error| CliError::Io(format!("cannot parse {}: {toml_error}", path.display())))
+    }
+
+    /// Writes to a sibling temp file and renames over the target so a crash mid-write
+    /// never leaves a truncated index behind.
+    pub fn save(&amp;self, config_dir: &amp;Path) -&gt; Result&lt;(), CliError&gt; {
+        std::fs::create_dir_all(config_dir)
+            .map_err(|io_error| CliError::Io(format!("cannot create {}: {io_error}", config_dir.display())))?;
+        let path = config_dir.join(INDEX_FILE);
+        let temp_path = config_dir.join(format!("{INDEX_FILE}.tmp"));
+        let contents = toml::to_string_pretty(self)
+            .map_err(|toml_error| CliError::Io(format!("cannot serialise index: {toml_error}")))?;
+        std::fs::write(&amp;temp_path, contents)
+            .map_err(|io_error| CliError::Io(format!("cannot write {}: {io_error}", temp_path.display())))?;
+        restrict_permissions(&amp;temp_path)?;
+        std::fs::rename(&amp;temp_path, &amp;path)
+            .map_err(|io_error| CliError::Io(format!("cannot replace {}: {io_error}", path.display())))
+    }
+}
+
+impl AccountParams {
+    pub fn validate(&amp;self) -&gt; Result&lt;(), CliError&gt; {
+        if !(6..=8).contains(&amp;self.digits) {
+            return Err(CliError::Usage(format!("digits must be 6, 7 or 8 (got {})", self.digits)));
+        }
+        if self.period == 0 {
+            return Err(CliError::Usage("period must be at least 1 second".into()));
+        }
+        Ok(())
+    }
+}
+
+pub fn config_dir() -&gt; Result&lt;PathBuf, CliError&gt; {
+    if let Some(explicit) = std::env::var_os(CONFIG_DIR_ENV).filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(explicit));
+    }
+    directories::ProjectDirs::from("com", "CreativePlanning", "totp-cli")
+        .map(|dirs| dirs.config_dir().to_path_buf())
+        .ok_or_else(|| CliError::Io("cannot determine a config directory; set TOTP_CLI_CONFIG_DIR".into()))
+}
+
+pub fn validate_name(name: &amp;str) -&gt; Result&lt;(), CliError&gt; {
+    let allowed = |character: char| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-');
+    if name.is_empty() || name.len() &gt; MAX_NAME_LENGTH || !name.chars().all(allowed) {
+        return Err(CliError::Usage(format!(
+            "invalid account name '{name}': use 1-{MAX_NAME_LENGTH} characters from A-Z, a-z, 0-9, '.', '_' and '-'"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn restrict_permissions(path: &amp;Path) -&gt; Result&lt;(), CliError&gt; {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|io_error| CliError::Io(format!("cannot set permissions on {}: {io_error}", path.display())))
+}
+
+#[cfg(not(unix))]
+fn restrict_permissions(_path: &amp;Path) -&gt; Result&lt;(), CliError&gt; {
+    Ok(())
+}</code></pre>
+<p>Add <code>pub mod index;</code> to <code>src/lib.rs</code>.</p>
+<ul>
+<li class="step">[ ] <strong>Step 4: Run tests</strong></li>
+<p>Run: <code>cargo test --lib index</code> Expected: 8 passed (7 on Windows, where the permissions test is compiled out).</p>
+<li class="step">[ ] <strong>Step 5: Commit</strong></li>
+</ul>
+<pre><code class="lang-bash">git add src/index.rs src/lib.rs
+git commit -m "Add accounts.toml index with atomic save and name validation
+
+Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
+<hr>
+<h3 id="task-6">Task 6: SecretStore trait, FileStore, KeyringStore</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>src/store.rs</code></li>
+<li>Modify: <code>src/lib.rs</code> (add <code>pub mod store;</code>)</li>
+<p><strong>Interfaces:</strong></p>
+<li>Consumes: <code>Secret</code>, <code>CliError::Store</code>.</li>
+<li>Produces:</li>
+<ul>
+<li><code>pub trait SecretStore { fn get(&amp;self, name: &amp;str) -&gt; Result&lt;Option&lt;Secret&gt;, CliError&gt;; fn set(&amp;self, name: &amp;str, secret: &amp;Secret) -&gt; Result&lt;(), CliError&gt;; fn delete(&amp;self, name: &amp;str) -&gt; Result&lt;(), CliError&gt;; }</code> — <code>delete</code> of a missing entry is <code>Ok(())</code>.</li>
+<li><code>pub struct FileStore { path: PathBuf }</code>, <code>FileStore::new(config_dir: &amp;Path) -&gt; FileStore</code> (file <code>secrets.toml</code>).</li>
+<li><code>pub struct KeyringStore;</code> — service <code>totp-cli</code>.</li>
+<li><code>pub fn open_store(config_dir: &amp;Path) -&gt; Result&lt;Box&lt;dyn SecretStore&gt;, CliError&gt;</code> — <code>TOTP_CLI_SECRET_STORE=file</code> → FileStore; unset or <code>keyring</code> → KeyringStore on macOS/Windows, Store error elsewhere; any other value → Usage error.</li>
+<li><code>pub const SECRETS_FILE: &amp;str = "secrets.toml";</code></li>
+</ul>
+<li class="step">[ ] <strong>Step 1: Write the failing tests</strong></li>
+</ul>
+<pre><code class="lang-rust">#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn secret(base32: &amp;str) -&gt; Secret {
+        Secret::parse(base32).unwrap()
+    }
+
+    #[test]
+    fn file_store_round_trips_a_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileStore::new(dir.path());
+        assert!(store.get("netsuite").unwrap().is_none());
+        store.set("netsuite", &amp;secret("GEZDGNBVGY3TQOJQ")).unwrap();
+        assert_eq!(store.get("netsuite").unwrap().unwrap().as_base32(), "GEZDGNBVGY3TQOJQ");
+    }
+
+    #[test]
+    fn file_store_set_replaces_and_delete_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileStore::new(dir.path());
+        store.set("a", &amp;secret("GEZDGNBVGY3TQOJQ")).unwrap();
+        store.set("a", &amp;secret("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")).unwrap();
+        assert_eq!(store.get("a").unwrap().unwrap().as_base32().len(), 32);
+        store.delete("a").unwrap();
+        store.delete("a").unwrap();
+        assert!(store.get("a").unwrap().is_none());
+    }
+
+    #[test]
+    fn file_store_keeps_other_entries_when_one_is_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileStore::new(dir.path());
+        store.set("a", &amp;secret("GEZDGNBVGY3TQOJQ")).unwrap();
+        store.set("b", &amp;secret("GEZDGNBVGY3TQOJQ")).unwrap();
+        store.delete("a").unwrap();
+        assert!(store.get("b").unwrap().is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_store_file_is_owner_readable_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        FileStore::new(dir.path()).set("a", &amp;secret("GEZDGNBVGY3TQOJQ")).unwrap();
+        let mode = std::fs::metadata(dir.path().join(SECRETS_FILE)).unwrap().permissions().mode();
+        assert_eq!(mode &amp; 0o777, 0o600);
+    }
+
+    #[test]
+    fn store_kind_parses_env_values() {
+        assert!(matches!(StoreKind::from_env_value(None), Ok(StoreKind::Keyring)));
+        assert!(matches!(StoreKind::from_env_value(Some("file")), Ok(StoreKind::File)));
+        assert!(matches!(StoreKind::from_env_value(Some("keyring")), Ok(StoreKind::Keyring)));
+        assert!(matches!(StoreKind::from_env_value(Some("vault")), Err(CliError::Usage(_))));
+    }
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<p>Run: <code>cargo test --lib store</code> Expected: compile error, <code>FileStore</code> not found.</p>
+<li class="step">[ ] <strong>Step 3: Implement</strong></li>
+</ul>
+<pre><code class="lang-rust">use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use crate::error::CliError;
+use crate::secret::Secret;
+
+pub const SECRETS_FILE: &amp;str = "secrets.toml";
+const STORE_ENV: &amp;str = "TOTP_CLI_SECRET_STORE";
+const KEYRING_SERVICE: &amp;str = "totp-cli";
+
+pub trait SecretStore {
+    fn get(&amp;self, name: &amp;str) -&gt; Result&lt;Option&lt;Secret&gt;, CliError&gt;;
+    fn set(&amp;self, name: &amp;str, secret: &amp;Secret) -&gt; Result&lt;(), CliError&gt;;
+    /// Deleting an entry that does not exist is not an error.
+    fn delete(&amp;self, name: &amp;str) -&gt; Result&lt;(), CliError&gt;;
+}
+
+pub fn open_store(config_dir: &amp;Path) -&gt; Result&lt;Box&lt;dyn SecretStore&gt;, CliError&gt; {
+    let env_value = std::env::var(STORE_ENV).ok();
+    match StoreKind::from_env_value(env_value.as_deref())? {
+        StoreKind::File =&gt; Ok(Box::new(FileStore::new(config_dir))),
+        StoreKind::Keyring =&gt; KeyringStore::open().map(|store| Box::new(store) as Box&lt;dyn SecretStore&gt;),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum StoreKind {
+    Keyring,
+    File,
+}
+
+impl StoreKind {
+    pub fn from_env_value(value: Option&lt;&amp;str&gt;) -&gt; Result&lt;StoreKind, CliError&gt; {
+        match value.map(str::trim) {
+            None | Some("") | Some("keyring") =&gt; Ok(StoreKind::Keyring),
+            Some("file") =&gt; Ok(StoreKind::File),
+            Some(other) =&gt; Err(CliError::Usage(format!(
+                "unknown {STORE_ENV} value '{other}'; use 'keyring' or 'file'"
+            ))),
+        }
+    }
+}
+
+// ---------- OS credential store ----------
+
+pub struct KeyringStore;
+
+impl KeyringStore {
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    pub fn open() -&gt; Result&lt;KeyringStore, CliError&gt; {
+        Ok(KeyringStore)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    pub fn open() -&gt; Result&lt;KeyringStore, CliError&gt; {
+        Err(CliError::Store(format!(
+            "no OS credential store backend on this platform; set {STORE_ENV}=file"
+        )))
+    }
+
+    fn entry(name: &amp;str) -&gt; Result&lt;keyring::Entry, CliError&gt; {
+        keyring::Entry::new(KEYRING_SERVICE, name)
+            .map_err(|keyring_error| CliError::Store(format!("credential store unavailable: {keyring_error}")))
+    }
+}
+
+impl SecretStore for KeyringStore {
+    fn get(&amp;self, name: &amp;str) -&gt; Result&lt;Option&lt;Secret&gt;, CliError&gt; {
+        match Self::entry(name)?.get_password() {
+            Ok(stored) =&gt; Secret::from_stored(&amp;stored).map(Some),
+            Err(keyring::Error::NoEntry) =&gt; Ok(None),
+            Err(keyring_error) =&gt; Err(CliError::Store(format!("credential store read failed: {keyring_error}"))),
+        }
+    }
+
+    fn set(&amp;self, name: &amp;str, secret: &amp;Secret) -&gt; Result&lt;(), CliError&gt; {
+        Self::entry(name)?
+            .set_password(secret.as_base32())
+            .map_err(|keyring_error| CliError::Store(format!("credential store write failed: {keyring_error}")))
+    }
+
+    fn delete(&amp;self, name: &amp;str) -&gt; Result&lt;(), CliError&gt; {
+        match Self::entry(name)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) =&gt; Ok(()),
+            Err(keyring_error) =&gt; Err(CliError::Store(format!("credential store delete failed: {keyring_error}"))),
+        }
+    }
+}
+
+// ---------- plain-file store (tests, Linux) ----------
+
+pub struct FileStore {
+    path: PathBuf,
+}
+
+impl FileStore {
+    pub fn new(config_dir: &amp;Path) -&gt; FileStore {
+        FileStore { path: config_dir.join(SECRETS_FILE) }
+    }
+
+    fn read_all(&amp;self) -&gt; Result&lt;BTreeMap&lt;String, String&gt;, CliError&gt; {
+        match std::fs::read_to_string(&amp;self.path) {
+            Ok(contents) =&gt; toml::from_str(&amp;contents)
+                .map_err(|toml_error| CliError::Store(format!("cannot parse {}: {toml_error}", self.path.display()))),
+            Err(io_error) if io_error.kind() == std::io::ErrorKind::NotFound =&gt; Ok(BTreeMap::new()),
+            Err(io_error) =&gt; Err(CliError::Store(format!("cannot read {}: {io_error}", self.path.display()))),
+        }
+    }
+
+    fn write_all(&amp;self, entries: &amp;BTreeMap&lt;String, String&gt;) -&gt; Result&lt;(), CliError&gt; {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|io_error| CliError::Store(format!("cannot create {}: {io_error}", parent.display())))?;
+        }
+        let contents = toml::to_string(entries)
+            .map_err(|toml_error| CliError::Store(format!("cannot serialise secrets: {toml_error}")))?;
+        std::fs::write(&amp;self.path, contents)
+            .map_err(|io_error| CliError::Store(format!("cannot write {}: {io_error}", self.path.display())))?;
+        restrict_permissions(&amp;self.path)
+    }
+}
+
+impl SecretStore for FileStore {
+    fn get(&amp;self, name: &amp;str) -&gt; Result&lt;Option&lt;Secret&gt;, CliError&gt; {
+        self.read_all()?
+            .get(name)
+            .map(|stored| Secret::from_stored(stored))
+            .transpose()
+    }
+
+    fn set(&amp;self, name: &amp;str, secret: &amp;Secret) -&gt; Result&lt;(), CliError&gt; {
+        let mut entries = self.read_all()?;
+        entries.insert(name.to_string(), secret.as_base32().to_string());
+        self.write_all(&amp;entries)
+    }
+
+    fn delete(&amp;self, name: &amp;str) -&gt; Result&lt;(), CliError&gt; {
+        let mut entries = self.read_all()?;
+        if entries.remove(name).is_some() {
+            self.write_all(&amp;entries)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn restrict_permissions(path: &amp;Path) -&gt; Result&lt;(), CliError&gt; {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|io_error| CliError::Store(format!("cannot set permissions on {}: {io_error}", path.display())))
+}
+
+#[cfg(not(unix))]
+fn restrict_permissions(_path: &amp;Path) -&gt; Result&lt;(), CliError&gt; {
+    Ok(())
+}</code></pre>
+<p>Add <code>pub mod store;</code> to <code>src/lib.rs</code>. If <code>keyring::Entry::new</code> on Linux without a backend fails to compile (it should not; the crate compiles with no platform features and errors at runtime), gate the whole <code>KeyringStore</code> impl behind the same <code>cfg</code> as <code>open()</code> and return the Store error from <code>open_store</code> instead.</p>
+<ul>
+<li class="step">[ ] <strong>Step 4: Run tests</strong></li>
+<p>Run: <code>cargo test --lib store</code> Expected: 5 passed (4 on Windows).</p>
+<li class="step">[ ] <strong>Step 5: Commit</strong></li>
+</ul>
+<pre><code class="lang-bash">git add src/store.rs src/lib.rs
+git commit -m "Add SecretStore trait with keyring and file-backed implementations
+
+Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
+<hr>
+<h3 id="task-7">Task 7: CLI skeleton, output, <code>add</code> and <code>list</code></h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>src/cli.rs</code>, <code>src/output.rs</code>, <code>src/commands/mod.rs</code>, <code>src/commands/add.rs</code>, <code>src/commands/list.rs</code>, <code>tests/common/mod.rs</code>, <code>tests/add_commands.rs</code></li>
+<li>Modify: <code>src/lib.rs</code> (add <code>pub mod cli; pub mod output; pub mod commands;</code>), <code>src/main.rs</code> (restore the <code>cli_main</code> call from Task 1)</li>
+<p><strong>Interfaces:</strong></p>
+<li>Consumes: <code>Index</code>, <code>AccountParams</code>, <code>validate_name</code>, <code>config_dir</code>, <code>open_store</code>, <code>SecretStore</code>, <code>Secret</code>, <code>otpauth::parse</code>, <code>Algorithm</code>, <code>CliError</code>.</li>
+<li>Produces:</li>
+<ul>
+<li><code>pub struct Outcome { pub human: String, pub json: Value }</code> with <code>Outcome::print(&amp;self, as_json: bool)</code>.</li>
+<li><code>pub fn cli_main() -&gt; u8</code></li>
+<li><code>pub struct AddArgs { name, secret: Option&lt;String&gt;, uri: Option&lt;String&gt;, digits: Option&lt;u32&gt;, period: Option&lt;u64&gt;, algorithm: Option&lt;Algorithm&gt;, issuer: Option&lt;String&gt;, force: bool }</code></li>
+<li><code>commands::add::run(args: &amp;AddArgs, config_dir: &amp;Path, store: &amp;dyn SecretStore) -&gt; Result&lt;Outcome, CliError&gt;</code></li>
+<li><code>commands::list::run(config_dir: &amp;Path) -&gt; Result&lt;Outcome, CliError&gt;</code></li>
+<li>Later tasks add <code>Command::Code</code>, <code>Command::Remove</code>, <code>Command::Skill</code>, <code>Command::Update</code> to the <code>Command</code> enum and matching arms in <code>run_command</code>.</li>
+</ul>
+<li class="step">[ ] <strong>Step 1: Write tests/common/mod.rs</strong></li>
+</ul>
+<pre><code class="lang-rust">use std::path::Path;
+
+use assert_cmd::Command;
+
+/// RFC 4226 test key "12345678901234567890" as base32.
+pub const RFC_SECRET: &amp;str = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+
+pub struct TestEnv {
+    pub dir: tempfile::TempDir,
+}
+
+impl TestEnv {
+    pub fn new() -&gt; TestEnv {
+        TestEnv { dir: tempfile::tempdir().expect("temp dir") }
+    }
+
+    pub fn config_dir(&amp;self) -&gt; &amp;Path {
+        self.dir.path()
+    }
+
+    /// A `totp-cli` invocation pointed at this env's temp config dir and the file-backed
+    /// secret store, so no test ever touches a real keychain.
+    pub fn cmd(&amp;self) -&gt; Command {
+        let mut command = Command::cargo_bin("totp-cli").expect("binary built");
+        command
+            .env("TOTP_CLI_CONFIG_DIR", self.config_dir())
+            .env("TOTP_CLI_SECRET_STORE", "file")
+            .env_remove("CLAUDE_CONFIG_DIR");
+        command
+    }
+
+    pub fn add(&amp;self, name: &amp;str) {
+        self.cmd().args(["add", name, "--secret", RFC_SECRET]).assert().success();
+    }
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 2: Write the failing integration tests in tests/add_commands.rs</strong></li>
+</ul>
+<pre><code class="lang-rust">mod common;
+
+use common::{RFC_SECRET, TestEnv};
+use predicates::prelude::*;
+
+#[test]
+fn add_then_list_shows_the_name_and_never_the_secret() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["add", "netsuite", "--secret", RFC_SECRET, "--issuer", "NetSuite"])
+        .assert()
+        .success()
+        .stdout("added netsuite\n");
+    env.cmd().arg("list").assert().success().stdout("netsuite\n");
+
+    let listing = env.cmd().args(["--json", "list"]).output().unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&amp;listing.stdout).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([{"name": "netsuite", "issuer": "NetSuite", "digits": 6, "period": 30, "algorithm": "sha1"}])
+    );
+    assert!(!String::from_utf8_lossy(&amp;listing.stdout).contains(RFC_SECRET));
+}
+
+#[test]
+fn list_with_no_accounts_prints_nothing_or_an_empty_array() {
+    let env = TestEnv::new();
+    env.cmd().arg("list").assert().success().stdout("");
+    env.cmd().args(["--json", "list"]).assert().success().stdout("[]\n");
+}
+
+#[test]
+fn add_json_reports_the_stored_parameters() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["--json", "add", "ns", "--secret", RFC_SECRET, "--digits", "8", "--period", "60", "--algorithm", "sha256"])
+        .assert()
+        .success()
+        .stdout("{\"algorithm\":\"sha256\",\"digits\":8,\"name\":\"ns\",\"period\":60}\n");
+}
+
+#[test]
+fn add_from_uri_takes_parameters_from_the_uri_and_flags_override() {
+    let env = TestEnv::new();
+    let uri = format!("otpauth://totp/NetSuite:jon?secret={RFC_SECRET}&amp;digits=8&amp;period=60&amp;algorithm=SHA512");
+    env.cmd()
+        .args(["--json", "add", "ns", "--uri", &amp;uri, "--digits", "7"])
+        .assert()
+        .success()
+        .stdout("{\"algorithm\":\"sha512\",\"digits\":7,\"issuer\":\"NetSuite\",\"name\":\"ns\",\"period\":60}\n");
+}
+
+#[test]
+fn duplicate_add_needs_force() {
+    let env = TestEnv::new();
+    env.add("ns");
+    env.cmd()
+        .args(["add", "ns", "--secret", RFC_SECRET])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("already exists"))
+        .stderr(predicate::str::contains("--force"));
+    env.cmd()
+        .args(["add", "ns", "--secret", RFC_SECRET, "--force"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn add_rejects_bad_names_secrets_parameters_and_conflicting_sources() {
+    let env = TestEnv::new();
+    env.cmd().args(["add", "bad name", "--secret", RFC_SECRET]).assert().code(2);
+    env.cmd().args(["add", "ns", "--secret", "NOT!BASE32"]).assert().code(2)
+        .stderr(predicate::str::contains("base32"));
+    env.cmd().args(["add", "ns", "--secret", RFC_SECRET, "--digits", "10"]).assert().code(2);
+    env.cmd().args(["add", "ns", "--secret", RFC_SECRET, "--period", "0"]).assert().code(2);
+    env.cmd().args(["add", "ns", "--secret", RFC_SECRET, "--uri", "otpauth://totp/x?secret=GEZDGNBVGY3TQOJQ"])
+        .assert().code(2);
+    env.cmd().arg("list").assert().success().stdout("");
+}
+
+#[test]
+fn json_errors_are_structured_on_stderr() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["--json", "add", "bad name", "--secret", RFC_SECRET])
+        .assert()
+        .code(2)
+        .stdout("")
+        .stderr(predicate::str::starts_with("{\"error\":\"invalid account name"))
+        .stderr(predicate::str::contains("\"exit_code\":2"));
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 3: Run to verify failure</strong></li>
+<p>Run: <code>cargo test --test add_commands</code> Expected: compile error (<code>totp_cli::cli</code> missing) or binary build failure.</p>
+<li class="step">[ ] <strong>Step 4: Write src/output.rs</strong></li>
+</ul>
+<pre><code class="lang-rust">use serde_json::Value;
+
+/// Every command yields one human line (possibly empty) and one JSON value;
+/// `--json` picks which reaches stdout.
+pub struct Outcome {
+    pub human: String,
+    pub json: Value,
+}
+
+impl Outcome {
+    pub fn print(&amp;self, as_json: bool) {
+        if as_json {
+            println!("{}", self.json);
+        } else if !self.human.is_empty() {
+            println!("{}", self.human);
+        }
+    }
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 5: Write src/cli.rs</strong></li>
+</ul>
+<pre><code class="lang-rust">use clap::{Parser, Subcommand};
+
+use crate::commands;
+use crate::error::CliError;
+use crate::index;
+use crate::output::Outcome;
+use crate::store;
+use crate::totp::Algorithm;
+
+#[derive(Parser)]
+#[command(
+    name = "totp-cli",
+    version,
+    about = "Generate TOTP codes from secrets kept in the OS credential store",
+    propagate_version = true
+)]
+pub struct Cli {
+    /// Print JSON on stdout (and structured JSON errors on stderr)
+    #[arg(long, global = true)]
+    pub json: bool,
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Subcommand)]
+pub enum Command {
+    /// Store a TOTP secret under a name
+    Add(AddArgs),
+    /// Print the names of the stored accounts (never the secrets)
+    List,
+}
+
+#[derive(clap::Args)]
+pub struct AddArgs {
+    /// Local alias, e.g. "netsuite" (letters, digits, '.', '_', '-')
+    pub name: String,
+    /// Base32 secret; omit both --secret and --uri to be prompted without echo
+    #[arg(long, conflicts_with = "uri")]
+    pub secret: Option&lt;String&gt;,
+    /// otpauth://totp/... URI from the QR code; supplies secret, issuer, digits, period, algorithm
+    #[arg(long)]
+    pub uri: Option&lt;String&gt;,
+    /// Code length: 6, 7 or 8 [default: 6, or the URI's value]
+    #[arg(long)]
+    pub digits: Option&lt;u32&gt;,
+    /// Seconds per code [default: 30, or the URI's value]
+    #[arg(long)]
+    pub period: Option&lt;u64&gt;,
+    /// HMAC algorithm [default: sha1, or the URI's value]
+    #[arg(long, ignore_case = true)]
+    pub algorithm: Option&lt;Algorithm&gt;,
+    /// Display name of the service (informational)
+    #[arg(long)]
+    pub issuer: Option&lt;String&gt;,
+    /// Replace an existing account with the same name
+    #[arg(long)]
+    pub force: bool,
+}
+
+pub fn cli_main() -&gt; u8 {
+    let cli = match Cli::try_parse() {
+        Ok(cli) =&gt; cli,
+        // clap prints its own usage message and uses exit code 2 for bad arguments.
+        Err(clap_error) =&gt; clap_error.exit(),
+    };
+    match run_command(&amp;cli.command) {
+        Ok(outcome) =&gt; {
+            outcome.print(cli.json);
+            0
+        }
+        Err(error) =&gt; {
+            report_error(&amp;error, cli.json);
+            error.exit_code()
+        }
+    }
+}
+
+fn run_command(command: &amp;Command) -&gt; Result&lt;Outcome, CliError&gt; {
+    let config_dir = index::config_dir()?;
+    match command {
+        Command::Add(args) =&gt; {
+            let store = store::open_store(&amp;config_dir)?;
+            commands::add::run(args, &amp;config_dir, store.as_ref())
+        }
+        Command::List =&gt; commands::list::run(&amp;config_dir),
+    }
+}
+
+fn report_error(error: &amp;CliError, as_json: bool) {
+    if as_json {
+        eprintln!("{}", error.to_json());
+    } else {
+        eprintln!("error: {error}");
+    }
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 6: Write src/commands/mod.rs, add.rs, list.rs</strong></li>
+<p><code>src/commands/mod.rs</code>:</p>
+</ul>
+<pre><code class="lang-rust">pub mod add;
+pub mod list;</code></pre>
+<p><code>src/commands/add.rs</code>:</p>
+<pre><code class="lang-rust">use std::path::Path;
+
+use serde_json::json;
+
+use crate::cli::AddArgs;
+use crate::error::CliError;
+use crate::index::{AccountParams, Index, validate_name};
+use crate::otpauth;
+use crate::output::Outcome;
+use crate::secret::Secret;
+use crate::store::SecretStore;
+use crate::totp::Algorithm;
+
+const DEFAULT_DIGITS: u32 = 6;
+const DEFAULT_PERIOD: u64 = 30;
+
+pub fn run(args: &amp;AddArgs, config_dir: &amp;Path, store: &amp;dyn SecretStore) -&gt; Result&lt;Outcome, CliError&gt; {
+    validate_name(&amp;args.name)?;
+    let (secret, params) = resolve_secret_and_params(args)?;
+    params.validate()?;
+
+    let mut index = Index::load(config_dir)?;
+    if index.accounts.contains_key(&amp;args.name) &amp;&amp; !args.force {
+        return Err(CliError::Usage(format!(
+            "account '{}' already exists; pass --force to replace it",
+            args.name
+        )));
+    }
+
+    store.set(&amp;args.name, &amp;secret)?;
+    index.accounts.insert(args.name.clone(), params.clone());
+    if let Err(save_error) = index.save(config_dir) {
+        // Keep the store and the index in agreement: undo the secret we just wrote.
+        let _ = store.delete(&amp;args.name);
+        return Err(save_error);
+    }
+
+    Ok(Outcome {
+        human: format!("added {}", args.name),
+        json: account_json(&amp;args.name, &amp;params),
+    })
+}
+
+pub fn account_json(name: &amp;str, params: &amp;AccountParams) -&gt; serde_json::Value {
+    let mut value = json!({
+        "name": name,
+        "digits": params.digits,
+        "period": params.period,
+        "algorithm": params.algorithm,
+    });
+    if let Some(issuer) = &amp;params.issuer {
+        value["issuer"] = json!(issuer);
+    }
+    value
+}
+
+fn resolve_secret_and_params(args: &amp;AddArgs) -&gt; Result&lt;(Secret, AccountParams), CliError&gt; {
+    let parsed_uri = args.uri.as_deref().map(otpauth::parse).transpose()?;
+    let (secret, uri_issuer, uri_digits, uri_period, uri_algorithm) = match parsed_uri {
+        Some(parsed) =&gt; (parsed.secret, parsed.issuer, parsed.digits, parsed.period, parsed.algorithm),
+        None =&gt; (read_secret(args.secret.as_deref())?, None, None, None, None),
+    };
+    let params = AccountParams {
+        issuer: args.issuer.clone().or(uri_issuer),
+        digits: args.digits.or(uri_digits).unwrap_or(DEFAULT_DIGITS),
+        period: args.period.or(uri_period).unwrap_or(DEFAULT_PERIOD),
+        algorithm: args.algorithm.or(uri_algorithm).unwrap_or(Algorithm::Sha1),
+    };
+    Ok((secret, params))
+}
+
+fn read_secret(flag_value: Option&lt;&amp;str&gt;) -&gt; Result&lt;Secret, CliError&gt; {
+    match flag_value {
+        Some(value) =&gt; Secret::parse(value),
+        None =&gt; {
+            let typed = rpassword::prompt_password("Secret (base32): ")
+                .map_err(|io_error| CliError::Usage(format!("cannot read secret from terminal: {io_error}")))?;
+            Secret::parse(&amp;typed)
+        }
+    }
+}</code></pre>
+<p><code>src/commands/list.rs</code>:</p>
+<pre><code class="lang-rust">use std::path::Path;
+
+use serde_json::Value;
+
+use crate::commands::add::account_json;
+use crate::error::CliError;
+use crate::index::Index;
+use crate::output::Outcome;
+
+pub fn run(config_dir: &amp;Path) -&gt; Result&lt;Outcome, CliError&gt; {
+    let index = Index::load(config_dir)?;
+    let names: Vec&lt;&amp;str&gt; = index.accounts.keys().map(String::as_str).collect();
+    let json: Vec&lt;Value&gt; = index
+        .accounts
+        .iter()
+        .map(|(name, params)| account_json(name, params))
+        .collect();
+    Ok(Outcome {
+        human: names.join("\n"),
+        json: Value::Array(json),
+    })
+}</code></pre>
+<p>Update <code>src/lib.rs</code> to declare all modules:</p>
+<pre><code class="lang-rust">pub mod cli;
+pub mod commands;
+pub mod error;
+pub mod index;
+pub mod otpauth;
+pub mod output;
+pub mod secret;
+pub mod store;
+pub mod totp;</code></pre>
+<p>Restore <code>src/main.rs</code>:</p>
+<pre><code class="lang-rust">fn main() {
+    std::process::exit(i32::from(totp_cli::cli::cli_main()));
+}</code></pre>
+<p>Note on the <code>add_json_reports_the_stored_parameters</code> expectation: <code>serde_json::Value</code>'s <code>Display</code> prints object keys in alphabetical order only when the <code>preserve_order</code> feature is off, which is the default. Keep it off.</p>
+<ul>
+<li class="step">[ ] <strong>Step 7: Run the tests</strong></li>
+<p>Run: <code>cargo test</code> Expected: all unit tests plus 7 integration tests pass.</p>
+<li class="step">[ ] <strong>Step 8: Lint and commit</strong></li>
+<p>Run: <code>cargo fmt &amp;&amp; cargo clippy --all-targets -- -D warnings</code></p>
+</ul>
+<pre><code class="lang-bash">git add src tests
+git commit -m "Add CLI skeleton with add and list commands
+
+Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
+<hr>
+<h3 id="task-8">Task 8: <code>code</code> command</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>src/commands/code.rs</code>, <code>tests/code_commands.rs</code></li>
+<li>Modify: <code>src/cli.rs</code> (add <code>Command::Code(CodeArgs)</code> and dispatch), <code>src/commands/mod.rs</code> (add <code>pub mod code;</code>)</li>
+<p><strong>Interfaces:</strong></p>
+<li>Consumes: <code>Index</code>, <code>SecretStore::get</code>, <code>totp::{totp, expires_in}</code>, <code>Outcome</code>.</li>
+<li>Produces:</li>
+<ul>
+<li><code>pub struct CodeArgs { pub name: String, pub min_remaining: u64, pub at: Option&lt;u64&gt; }</code></li>
+<li><code>commands::code::run(args: &amp;CodeArgs, config_dir: &amp;Path, store: &amp;dyn SecretStore) -&gt; Result&lt;Outcome, CliError&gt;</code></li>
+<li><code>commands::code::effective_time(now: u64, period: u64, min_remaining: u64) -&gt; u64</code> (pure; returns <code>now</code>, or the start of the next period when the current code expires too soon).</li>
+</ul>
+<li class="step">[ ] <strong>Step 1: Write the failing tests in tests/code_commands.rs</strong></li>
+</ul>
+<pre><code class="lang-rust">mod common;
+
+use common::{RFC_SECRET, TestEnv};
+use predicates::prelude::*;
+
+#[test]
+fn code_prints_the_rfc_vector_for_a_fixed_time() {
+    let env = TestEnv::new();
+    env.add("ns");
+    env.cmd().args(["code", "ns", "--at", "59"]).assert().success().stdout("287082\n");
+    env.cmd().args(["code", "ns", "--at", "1111111109"]).assert().success().stdout("081804\n");
+}
+
+#[test]
+fn code_json_includes_expiry() {
+    let env = TestEnv::new();
+    env.add("ns");
+    env.cmd()
+        .args(["--json", "code", "ns", "--at", "59"])
+        .assert()
+        .success()
+        .stdout("{\"code\":\"287082\",\"expires_in\":1,\"name\":\"ns\",\"period\":30}\n");
+}
+
+#[test]
+fn code_honours_eight_digits_and_sha256() {
+    let env = TestEnv::new();
+    // RFC 6238 SHA-256 key "12345678901234567890123456789012" (32 bytes) as base32.
+    let sha256_key = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA";
+    env.cmd()
+        .args(["add", "big", "--secret", sha256_key, "--digits", "8", "--algorithm", "sha256"])
+        .assert()
+        .success();
+    env.cmd().args(["code", "big", "--at", "59"]).assert().success().stdout("46119246\n");
+}
+
+#[test]
+fn min_remaining_rolls_to_the_next_period_when_the_code_is_about_to_expire() {
+    let env = TestEnv::new();
+    env.add("ns");
+    // At t=59 the code expires in 1s; with --min-remaining 5 we get the t=60 code (HOTP counter 2).
+    env.cmd()
+        .args(["--json", "code", "ns", "--at", "59", "--min-remaining", "5"])
+        .assert()
+        .success()
+        .stdout("{\"code\":\"359152\",\"expires_in\":30,\"name\":\"ns\",\"period\":30}\n");
+    // At t=60 the code has 30s left, so nothing changes.
+    env.cmd().args(["code", "ns", "--at", "60", "--min-remaining", "5"]).assert().success().stdout("359152\n");
+}
+
+#[test]
+fn min_remaining_at_or_above_the_period_is_a_usage_error() {
+    let env = TestEnv::new();
+    env.add("ns");
+    env.cmd()
+        .args(["code", "ns", "--at", "59", "--min-remaining", "30"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--min-remaining"));
+}
+
+#[test]
+fn unknown_account_is_exit_2() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["code", "nope"])
+        .assert()
+        .code(2)
+        .stdout("")
+        .stderr(predicate::str::contains("no account named 'nope'"));
+}
+
+#[test]
+fn indexed_account_with_missing_secret_is_exit_3() {
+    let env = TestEnv::new();
+    env.add("ns");
+    std::fs::remove_file(env.config_dir().join("secrets.toml")).unwrap();
+    env.cmd()
+        .args(["code", "ns"])
+        .assert()
+        .code(3)
+        .stdout("")
+        .stderr(predicate::str::contains("add ns --force"));
+}
+
+#[test]
+fn code_without_at_uses_the_clock_and_prints_six_digits() {
+    let env = TestEnv::new();
+    env.add("ns");
+    env.cmd()
+        .args(["code", "ns"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match(r"^\d{6}\n$").unwrap());
+    let _ = RFC_SECRET;
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<p>Run: <code>cargo test --test code_commands</code> Expected: failures, <code>code</code> is an unknown subcommand (clap exit 2 on every test).</p>
+<li class="step">[ ] <strong>Step 3: Add CodeArgs and dispatch in src/cli.rs</strong></li>
+<p>Add to the <code>Command</code> enum:</p>
+</ul>
+<pre><code class="lang-rust">    /// Print the current code for a stored account
+    Code(CodeArgs),</code></pre>
+<p>Add the args struct:</p>
+<pre><code class="lang-rust">#[derive(clap::Args)]
+pub struct CodeArgs {
+    /// Account name given to `add`
+    pub name: String,
+    /// If the current code expires in fewer than this many seconds, wait for the next one
+    #[arg(long, default_value_t = 0, value_name = "SECS")]
+    pub min_remaining: u64,
+    /// Compute the code for this Unix time instead of now (testing / clock-skew debugging)
+    #[arg(long, hide = true)]
+    pub at: Option&lt;u64&gt;,
+}</code></pre>
+<p>Add to <code>run_command</code>:</p>
+<pre><code class="lang-rust">        Command::Code(args) =&gt; {
+            let store = store::open_store(&amp;config_dir)?;
+            commands::code::run(args, &amp;config_dir, store.as_ref())
+        }</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 4: Write src/commands/code.rs</strong></li>
+</ul>
+<pre><code class="lang-rust">use std::path::Path;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use serde_json::json;
+
+use crate::cli::CodeArgs;
+use crate::error::CliError;
+use crate::index::Index;
+use crate::output::Outcome;
+use crate::store::SecretStore;
+use crate::totp::{expires_in, totp};
+
+pub fn run(args: &amp;CodeArgs, config_dir: &amp;Path, store: &amp;dyn SecretStore) -&gt; Result&lt;Outcome, CliError&gt; {
+    let index = Index::load(config_dir)?;
+    let params = index.accounts.get(&amp;args.name).ok_or_else(|| {
+        CliError::Usage(format!("no account named '{}'; run `totp-cli list`", args.name))
+    })?;
+    if args.min_remaining &gt;= params.period {
+        return Err(CliError::Usage(format!(
+            "--min-remaining must be less than the period ({}s)",
+            params.period
+        )));
+    }
+    let secret = store.get(&amp;args.name)?.ok_or_else(|| {
+        CliError::Store(format!(
+            "secret for '{name}' is missing from the credential store; re-add it with `totp-cli add {name} --force`",
+            name = args.name
+        ))
+    })?;
+
+    let now = args.at.map(Ok).unwrap_or_else(current_unix_time)?;
+    let time = effective_time(now, params.period, args.min_remaining);
+    if time &gt; now &amp;&amp; args.at.is_none() {
+        std::thread::sleep(Duration::from_secs(time - now));
+    }
+
+    let code = totp(&amp;secret.key_bytes(), time, params.period, params.digits, params.algorithm);
+    let remaining = expires_in(time, params.period);
+    Ok(Outcome {
+        human: code.clone(),
+        json: json!({
+            "name": args.name,
+            "code": code,
+            "expires_in": remaining,
+            "period": params.period,
+        }),
+    })
+}
+
+/// Returns `now`, or the first second of the next period when the current code would
+/// expire in fewer than `min_remaining` seconds.
+pub fn effective_time(now: u64, period: u64, min_remaining: u64) -&gt; u64 {
+    let remaining = expires_in(now, period);
+    if min_remaining &gt; 0 &amp;&amp; remaining &lt; min_remaining {
+        now + remaining
+    } else {
+        now
+    }
+}
+
+fn current_unix_time() -&gt; Result&lt;u64, CliError&gt; {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .map_err(|clock_error| CliError::Io(format!("system clock is before 1970: {clock_error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_time_only_advances_when_the_code_is_about_to_expire() {
+        assert_eq!(effective_time(59, 30, 0), 59);
+        assert_eq!(effective_time(59, 30, 5), 60);
+        assert_eq!(effective_time(60, 30, 5), 60);
+        assert_eq!(effective_time(85, 30, 5), 85);
+        assert_eq!(effective_time(86, 30, 5), 90);
+    }
+}</code></pre>
+<p>Add <code>pub mod code;</code> to <code>src/commands/mod.rs</code>.</p>
+<ul>
+<li class="step">[ ] <strong>Step 5: Run the tests</strong></li>
+<p>Run: <code>cargo test</code> Expected: all pass, including 8 new integration tests and 1 new unit test.</p>
+<li class="step">[ ] <strong>Step 6: Lint and commit</strong></li>
+<p>Run: <code>cargo fmt &amp;&amp; cargo clippy --all-targets -- -D warnings</code></p>
+</ul>
+<pre><code class="lang-bash">git add src tests
+git commit -m "Add code command with --min-remaining and JSON expiry
+
+Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
+<hr>
+<h3 id="task-9">Task 9: <code>remove</code> command</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>src/commands/remove.rs</code>, <code>tests/list_remove_commands.rs</code></li>
+<li>Modify: <code>src/cli.rs</code> (add <code>Command::Remove { name: String }</code> and dispatch), <code>src/commands/mod.rs</code> (add <code>pub mod remove;</code>)</li>
+<p><strong>Interfaces:</strong></p>
+<li>Consumes: <code>Index</code>, <code>SecretStore::delete</code>, <code>Outcome</code>.</li>
+<li>Produces: <code>commands::remove::run(name: &amp;str, config_dir: &amp;Path, store: &amp;dyn SecretStore) -&gt; Result&lt;Outcome, CliError&gt;</code></li>
+<li class="step">[ ] <strong>Step 1: Write the failing tests in tests/list_remove_commands.rs</strong></li>
+</ul>
+<pre><code class="lang-rust">mod common;
+
+use common::TestEnv;
+use predicates::prelude::*;
+
+#[test]
+fn remove_deletes_the_account_and_its_secret() {
+    let env = TestEnv::new();
+    env.add("a");
+    env.add("b");
+    env.cmd().args(["remove", "a"]).assert().success().stdout("removed a\n");
+    env.cmd().arg("list").assert().success().stdout("b\n");
+    env.cmd().args(["code", "a"]).assert().code(2);
+    let secrets = std::fs::read_to_string(env.config_dir().join("secrets.toml")).unwrap();
+    assert!(!secrets.contains("\"a\"") &amp;&amp; !secrets.starts_with("a = "));
+    assert!(secrets.contains("b = "));
+}
+
+#[test]
+fn remove_json_shape() {
+    let env = TestEnv::new();
+    env.add("a");
+    env.cmd()
+        .args(["--json", "remove", "a"])
+        .assert()
+        .success()
+        .stdout("{\"name\":\"a\",\"removed\":true}\n");
+}
+
+#[test]
+fn remove_unknown_account_is_exit_2() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["remove", "ghost"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no account named 'ghost'"));
+}
+
+#[test]
+fn remove_succeeds_when_the_secret_is_already_gone() {
+    let env = TestEnv::new();
+    env.add("a");
+    std::fs::remove_file(env.config_dir().join("secrets.toml")).unwrap();
+    env.cmd().args(["remove", "a"]).assert().success();
+    env.cmd().arg("list").assert().success().stdout("");
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<p>Run: <code>cargo test --test list_remove_commands</code> Expected: failures, <code>remove</code> unknown subcommand.</p>
+<li class="step">[ ] <strong>Step 3: Add the subcommand in src/cli.rs</strong></li>
+<p>In the <code>Command</code> enum:</p>
+</ul>
+<pre><code class="lang-rust">    /// Delete a stored account and its secret
+    Remove {
+        /// Account name given to `add`
+        name: String,
+    },</code></pre>
+<p>In <code>run_command</code>:</p>
+<pre><code class="lang-rust">        Command::Remove { name } =&gt; {
+            let store = store::open_store(&amp;config_dir)?;
+            commands::remove::run(name, &amp;config_dir, store.as_ref())
+        }</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 4: Write src/commands/remove.rs</strong></li>
+</ul>
+<pre><code class="lang-rust">use std::path::Path;
+
+use serde_json::json;
+
+use crate::error::CliError;
+use crate::index::Index;
+use crate::output::Outcome;
+use crate::store::SecretStore;
+
+pub fn run(name: &amp;str, config_dir: &amp;Path, store: &amp;dyn SecretStore) -&gt; Result&lt;Outcome, CliError&gt; {
+    let mut index = Index::load(config_dir)?;
+    if !index.accounts.contains_key(name) {
+        return Err(CliError::Usage(format!("no account named '{name}'; run `totp-cli list`")));
+    }
+    store.delete(name)?;
+    index.accounts.remove(name);
+    index.save(config_dir)?;
+    Ok(Outcome {
+        human: format!("removed {name}"),
+        json: json!({"name": name, "removed": true}),
+    })
+}</code></pre>
+<p>Add <code>pub mod remove;</code> to <code>src/commands/mod.rs</code>.</p>
+<ul>
+<li class="step">[ ] <strong>Step 5: Run the tests, lint, commit</strong></li>
+<p>Run: <code>cargo test &amp;&amp; cargo fmt &amp;&amp; cargo clippy --all-targets -- -D warnings</code> Expected: all pass.</p>
+</ul>
+<pre><code class="lang-bash">git add src tests
+git commit -m "Add remove command
+
+Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
+<hr>
+<h3 id="task-10">Task 10: Embedded skill and <code>skill install</code></h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>skills/totp-cli/SKILL.md</code>, <code>src/commands/skill.rs</code>, <code>tests/skill_commands.rs</code></li>
+<li>Modify: <code>src/cli.rs</code> (add <code>Command::Skill { action: SkillAction }</code>), <code>src/commands/mod.rs</code> (add <code>pub mod skill;</code>)</li>
+<p><strong>Interfaces:</strong></p>
+<li>Produces:</li>
+<ul>
+<li><code>pub const EMBEDDED_SKILL: &amp;str</code></li>
+<li><code>pub enum SkillTarget { Write(PathBuf), Skip(&amp;'static str) }</code></li>
+<li><code>commands::skill::install(dir_override: Option&lt;&amp;Path&gt;) -&gt; Result&lt;serde_json::Value, CliError&gt;</code></li>
+<li><code>commands::skill::resolve_target(dir_override: Option&lt;&amp;Path&gt;, config_base: Option&lt;&amp;Path&gt;, base_exists: bool) -&gt; SkillTarget</code></li>
+<li><code>SkillAction::Install { dir: Option&lt;PathBuf&gt; }</code></li>
+</ul>
+<li class="step">[ ] <strong>Step 1: Write skills/totp-cli/SKILL.md</strong></li>
+</ul>
+<pre><code class="lang-markdown">---
+name: totp-cli
+description: Use when a login flow asks for a 6-digit authenticator / TOTP / 2FA code and the account is enrolled in totp-cli, or when a task needs to enrol, list or remove TOTP accounts from the command line. Covers fetching a code safely for automation (--min-remaining), enrolling from a secret or otpauth URI, and triaging errors by exit code.
+---
+
+# totp-cli
+
+Single-binary CLI that keeps TOTP secrets in the OS credential store (macOS Keychain,
+Windows Credential Manager) and prints the current code for a named account. Built for
+agents: the code is the only thing on stdout, errors go to stderr, exit codes are fixed.
+Full reference: `totp-cli &lt;subcommand&gt; --help`.
+
+## Pick the right command
+
+| You need | Use |
+|---|---|
+| The current code for an enrolled account | `totp-cli code &lt;name&gt;` |
+| A code that will still be valid while a form is filled and submitted | `totp-cli code &lt;name&gt; --min-remaining 5` |
+| Code plus seconds until it rolls over | `totp-cli --json code &lt;name&gt;` → `{"name","code","expires_in","period"}` |
+| Which accounts exist | `totp-cli list` (names only; secrets are never printed) |
+| Enrol from a base32 secret | `totp-cli add &lt;name&gt; --secret &lt;BASE32&gt; [--issuer X]` |
+| Enrol from a QR-code URI | `totp-cli add &lt;name&gt; --uri 'otpauth://totp/...'` |
+| Replace a secret | `totp-cli add &lt;name&gt; ... --force` |
+| Remove an account | `totp-cli remove &lt;name&gt;` |
+
+## Recipe: a login page asks for a 2FA code
+
+```bash
+code=$(totp-cli code netsuite --min-remaining 5) || exit_code=$?
+```
+
+- Exit 0: `$code` is the 6-digit value; type it into the form and submit promptly.
+- Exit 2 with "no account named": the account is not enrolled. **Ask the user** for the code
+  (or to enrol it); never guess a name or try other accounts.
+- Exit 3: the credential store refused or lost the secret. Report the stderr text to the user.
+
+`--min-remaining 5` waits (at most a few seconds) for the next period if the current code
+is about to expire, so the submitted code is never stale.
+
+## Enrolling
+
+Pass the secret with `--secret`, or run `totp-cli add &lt;name&gt;` with neither `--secret` nor
+`--uri` to be prompted without echo. The secret is never echoed back or included in
+`--json` output. Defaults are 6 digits, 30 seconds, SHA-1; `--uri` carries the service's
+own values and explicit flags override them.
+
+## Exit codes
+
+| Code | Meaning | What to do |
+|---|---|---|
+| 0 | Success | Use stdout |
+| 1 | Internal / I/O (e.g. unreadable accounts.toml) | Report stderr to the user |
+| 2 | Usage: bad arguments, bad secret, unknown or duplicate account | Fix the call, or ask the user |
+| 3 | Credential store unavailable, denied, or missing the secret | Report stderr; re-enrol with `add --force` if the user agrees |
+
+## Storage
+
+Secrets: OS credential store, service `totp-cli`, one item per account. Non-secret
+parameters: `accounts.toml` in the per-user config dir (override with
+`TOTP_CLI_CONFIG_DIR`). `TOTP_CLI_SECRET_STORE=file` swaps in an unencrypted
+`secrets.toml` for tests and headless Linux only.
+
+## Maintenance
+
+`totp-cli update --check` reports a newer release; `totp-cli update` installs it and
+refreshes this skill. `totp-cli skill install [--dir &lt;path&gt;]` rewrites the skill alone.</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 2: Write the failing tests in tests/skill_commands.rs</strong></li>
+</ul>
+<pre><code class="lang-rust">use totp_cli::commands::skill::{self, EMBEDDED_SKILL};
+
+#[test]
+fn install_writes_embedded_skill_to_dir_override() {
+    let dir = tempfile::tempdir().unwrap();
+    let result = skill::install(Some(dir.path())).unwrap();
+    assert_eq!(result["installed"], true);
+    let written = std::fs::read_to_string(dir.path().join("SKILL.md")).unwrap();
+    assert_eq!(written, EMBEDDED_SKILL);
+    assert_eq!(result["path"], dir.path().join("SKILL.md").display().to_string());
+}
+
+#[test]
+fn second_install_reports_already_current() {
+    let dir = tempfile::tempdir().unwrap();
+    skill::install(Some(dir.path())).unwrap();
+    let again = skill::install(Some(dir.path())).unwrap();
+    assert_eq!(again["installed"], false);
+    assert_eq!(again["reason"], "already current");
+}
+
+#[test]
+fn install_skips_a_symlinked_target_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real-SKILL.md");
+    std::fs::write(&amp;real, "stale").unwrap();
+    let link = dir.path().join("SKILL.md");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&amp;real, &amp;link).unwrap();
+    #[cfg(windows)]
+    if std::os::windows::fs::symlink_file(&amp;real, &amp;link).is_err() {
+        return; // symlink creation needs Developer Mode on Windows runners; nothing to test
+    }
+    let result = skill::install(Some(dir.path())).unwrap();
+    assert_eq!(result["installed"], false);
+    assert!(result["reason"].as_str().unwrap().contains("symlink"));
+    assert_eq!(std::fs::read_to_string(&amp;real).unwrap(), "stale");
+}
+
+#[test]
+fn cli_skill_install_reports_json_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = assert_cmd::Command::cargo_bin("totp-cli")
+        .unwrap()
+        .args(["skill", "install", "--dir"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&amp;output.stdout).unwrap();
+    assert_eq!(json["skill"], "totp-cli");
+    assert_eq!(json["installed"], true);
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 3: Run to verify failure</strong></li>
+<p>Run: <code>cargo test --test skill_commands</code> Expected: compile error, <code>commands::skill</code> missing.</p>
+<li class="step">[ ] <strong>Step 4: Write src/commands/skill.rs</strong></li>
+</ul>
+<pre><code class="lang-rust">use std::path::{Path, PathBuf};
+
+use serde_json::{Value, json};
+
+use crate::error::CliError;
+
+pub const EMBEDDED_SKILL: &amp;str = include_str!("../../skills/totp-cli/SKILL.md");
+
+const SKILL_NAME: &amp;str = "totp-cli";
+const SKILL_FILE: &amp;str = "SKILL.md";
+
+#[derive(Debug)]
+pub enum SkillTarget {
+    Write(PathBuf),
+    Skip(&amp;'static str),
+}
+
+pub fn install(dir_override: Option&lt;&amp;Path&gt;) -&gt; Result&lt;Value, CliError&gt; {
+    let config_base = config_base_dir();
+    let base_exists = config_base.as_deref().is_some_and(Path::exists);
+    let path = match resolve_target(dir_override, config_base.as_deref(), base_exists) {
+        SkillTarget::Skip(reason) =&gt; {
+            eprintln!("skill not installed ({reason}); place it yourself with `totp-cli skill install --dir &lt;your skills dir&gt;`");
+            return Ok(skip_json(reason));
+        }
+        SkillTarget::Write(path) =&gt; path,
+    };
+
+    if is_symlink(&amp;path) || path.parent().is_some_and(is_symlink) {
+        return Ok(skip_json("symlink — skill tracks its source repo via git"));
+    }
+    if std::fs::read_to_string(&amp;path).is_ok_and(|existing| existing == EMBEDDED_SKILL) {
+        return Ok(installed_json(&amp;path, false, Some("already current")));
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|io_error| CliError::Io(format!("cannot create {}: {io_error}", parent.display())))?;
+    }
+    std::fs::write(&amp;path, EMBEDDED_SKILL)
+        .map_err(|io_error| CliError::Io(format!("cannot write {}: {io_error}", path.display())))?;
+    Ok(installed_json(&amp;path, true, None))
+}
+
+pub fn resolve_target(dir_override: Option&lt;&amp;Path&gt;, config_base: Option&lt;&amp;Path&gt;, base_exists: bool) -&gt; SkillTarget {
+    if let Some(dir) = dir_override {
+        let path = if dir.file_name().is_some_and(|name| name == SKILL_FILE) {
+            dir.to_path_buf()
+        } else {
+            dir.join(SKILL_FILE)
+        };
+        return SkillTarget::Write(path);
+    }
+    match config_base {
+        Some(base) if base_exists =&gt; SkillTarget::Write(base.join("skills").join(SKILL_NAME).join(SKILL_FILE)),
+        _ =&gt; SkillTarget::Skip("no Claude config dir"),
+    }
+}
+
+fn config_base_dir() -&gt; Option&lt;PathBuf&gt; {
+    if let Some(explicit) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(explicit));
+    }
+    directories::UserDirs::new().map(|dirs| dirs.home_dir().join(".claude"))
+}
+
+fn is_symlink(path: &amp;Path) -&gt; bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+}
+
+fn skip_json(reason: &amp;str) -&gt; Value {
+    json!({"skill": SKILL_NAME, "installed": false, "reason": reason})
+}
+
+fn installed_json(path: &amp;Path, installed: bool, reason: Option&lt;&amp;str&gt;) -&gt; Value {
+    let mut result = json!({"skill": SKILL_NAME, "path": path.display().to_string(), "installed": installed});
+    if let Some(reason) = reason {
+        result["reason"] = json!(reason);
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_skill_carries_the_real_frontmatter() {
+        let normalised: String = EMBEDDED_SKILL.chars().filter(|character| *character != '\r').collect();
+        assert!(normalised.starts_with("---\nname: totp-cli"));
+        assert!(EMBEDDED_SKILL.len() &gt; 500);
+    }
+
+    #[test]
+    fn resolve_target_builds_the_conventional_path_under_an_existing_base() {
+        match resolve_target(None, Some(Path::new("/home/x/.claude")), true) {
+            SkillTarget::Write(path) =&gt; assert_eq!(path, PathBuf::from("/home/x/.claude/skills/totp-cli/SKILL.md")),
+            other =&gt; panic!("expected Write, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_target_skips_when_base_missing() {
+        assert!(matches!(resolve_target(None, Some(Path::new("/none")), false), SkillTarget::Skip("no Claude config dir")));
+    }
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 5: Wire the subcommand in src/cli.rs</strong></li>
+<p>In <code>Command</code>:</p>
+</ul>
+<pre><code class="lang-rust">    /// Install or refresh the bundled agent skill (SKILL.md)
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },</code></pre>
+<p>New enum:</p>
+<pre><code class="lang-rust">#[derive(Subcommand)]
+pub enum SkillAction {
+    /// Write the embedded SKILL.md to your Claude skills dir (skips a symlinked copy)
+    Install {
+        /// Target directory (or SKILL.md path) instead of ~/.claude/skills/totp-cli
+        #[arg(long)]
+        dir: Option&lt;std::path::PathBuf&gt;,
+    },
+}</code></pre>
+<p>In <code>run_command</code>, before the <code>let config_dir</code> line is fine too, but simplest is a new arm:</p>
+<pre><code class="lang-rust">        Command::Skill { action: SkillAction::Install { dir } } =&gt; {
+            let result = commands::skill::install(dir.as_deref())?;
+            Ok(Outcome { human: result.to_string(), json: result })
+        }</code></pre>
+<p>(<code>skill install</code> always prints JSON, like netsuite-cli, so <code>update</code> can parse it.)</p>
+<p>Add <code>pub mod skill;</code> to <code>src/commands/mod.rs</code>.</p>
+<ul>
+<li class="step">[ ] <strong>Step 6: Run tests, lint, commit</strong></li>
+<p>Run: <code>cargo test &amp;&amp; cargo fmt &amp;&amp; cargo clippy --all-targets -- -D warnings</code> Expected: all pass.</p>
+</ul>
+<pre><code class="lang-bash">git add skills src tests
+git commit -m "Embed the totp-cli agent skill and add skill install
+
+Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
+<hr>
+<h3 id="task-11">Task 11: <code>update</code> command and README</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Create: <code>src/commands/update.rs</code>, <code>README.md</code></li>
+<li>Modify: <code>src/cli.rs</code> (add <code>Command::Update { check: bool, skip_skill: bool }</code>), <code>src/commands/mod.rs</code> (add <code>pub mod update;</code>)</li>
+<p><strong>Interfaces:</strong></p>
+<li>Produces: <code>commands::update::run(check_only: bool, skip_skill: bool) -&gt; Result&lt;serde_json::Value, CliError&gt;</code>; constants <code>REPO_OWNER = "CreativePlanningBusinessServices"</code>, <code>REPO_NAME = "totp-cli"</code>.</li>
+<li class="step">[ ] <strong>Step 1: Write src/commands/update.rs with its unit tests</strong></li>
+</ul>
+<pre><code class="lang-rust">use std::path::Path;
+
+use serde_json::{Value, json};
+
+use crate::error::CliError;
+
+pub const REPO_OWNER: &amp;str = "CreativePlanningBusinessServices";
+pub const REPO_NAME: &amp;str = "totp-cli";
+
+pub fn run(check_only: bool, skip_skill: bool) -&gt; Result&lt;Value, CliError&gt; {
+    if check_only { check_for_update() } else { install_update(skip_skill) }
+}
+
+fn check_for_update() -&gt; Result&lt;Value, CliError&gt; {
+    let current_version = env!("CARGO_PKG_VERSION");
+    let latest_release = build_updater()?
+        .get_latest_release()
+        .map_err(|update_error| CliError::Io(update_error.to_string()))?;
+    Ok(json!({
+        "current": current_version,
+        "latest": latest_release.version,
+        "updateAvailable": update_available(current_version, &amp;latest_release.version)?,
+    }))
+}
+
+/// Release tags carry a leading `v`; CARGO_PKG_VERSION never does. Compare as semver.
+fn update_available(current: &amp;str, latest: &amp;str) -&gt; Result&lt;bool, CliError&gt; {
+    let latest_stripped = latest.strip_prefix(['v', 'V']).unwrap_or(latest);
+    self_update::version::bump_is_greater(current, latest_stripped).map_err(|version_error| {
+        CliError::Io(format!("cannot compare versions '{current}' and '{latest}': {version_error}"))
+    })
+}
+
+fn install_update(skip_skill: bool) -&gt; Result&lt;Value, CliError&gt; {
+    // Resolve before the swap: on some platforms current_exe() is unreliable afterwards.
+    let exe_path = std::env::current_exe();
+    let status = build_updater()?
+        .update()
+        .map_err(|update_error| CliError::Io(update_error.to_string()))?;
+    let mut result = json!({"updated": status.updated(), "version": status.version()});
+    if !skip_skill &amp;&amp; status.updated() {
+        result["skill"] = match exe_path {
+            Ok(exe) =&gt; refresh_skill_via_new_binary(&amp;exe),
+            Err(error) =&gt; skill_refresh_error(&amp;format!("cannot locate updated binary: {error}")),
+        };
+    }
+    Ok(result)
+}
+
+/// The running process still holds the OLD embedded skill, so run the freshly installed
+/// binary's `skill install` instead. Never fatal.
+fn refresh_skill_via_new_binary(exe: &amp;Path) -&gt; Value {
+    match std::process::Command::new(exe).args(["skill", "install"]).output() {
+        Ok(done) if done.status.success() =&gt; {
+            if !done.stderr.is_empty() {
+                eprint!("{}", String::from_utf8_lossy(&amp;done.stderr));
+            }
+            serde_json::from_slice(&amp;done.stdout)
+                .map(drop_skill_name)
+                .unwrap_or_else(|_| skill_refresh_error("skill install produced no JSON"))
+        }
+        Ok(done) =&gt; skill_refresh_error(&amp;format!(
+            "skill install exited {}: {}",
+            done.status,
+            String::from_utf8_lossy(&amp;done.stderr).trim()
+        )),
+        Err(error) =&gt; skill_refresh_error(&amp;format!("could not run skill install: {error}")),
+    }
+}
+
+fn drop_skill_name(mut value: Value) -&gt; Value {
+    if let Some(map) = value.as_object_mut() {
+        map.remove("skill");
+    }
+    value
+}
+
+fn skill_refresh_error(message: &amp;str) -&gt; Value {
+    eprintln!("binary updated; skill refresh skipped — {message}");
+    json!({"installed": false, "reason": message})
+}
+
+fn build_updater() -&gt; Result&lt;Box&lt;dyn self_update::update::ReleaseUpdate&gt;, CliError&gt; {
+    let mut updater = self_update::backends::github::Update::configure();
+    updater
+        .repo_owner(REPO_OWNER)
+        .repo_name(REPO_NAME)
+        .bin_name("totp-cli")
+        .show_download_progress(false)
+        .current_version(env!("CARGO_PKG_VERSION"));
+    if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
+        updater.auth_token(&amp;github_token);
+    }
+    updater.build().map_err(|update_error| CliError::Io(update_error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_available_treats_v_prefixed_equal_versions_as_no_update() {
+        assert!(!update_available("0.1.0", "v0.1.0").unwrap());
+    }
+
+    #[test]
+    fn update_available_detects_a_newer_release() {
+        assert!(update_available("0.1.0", "0.2.0").unwrap());
+        assert!(!update_available("0.2.0", "0.1.0").unwrap());
+    }
+
+    #[test]
+    fn drop_skill_name_removes_the_redundant_self_identifier() {
+        assert_eq!(
+            drop_skill_name(json!({"skill": "totp-cli", "installed": true})),
+            json!({"installed": true})
+        );
+    }
+}</code></pre>
+<ul>
+<li class="step">[ ] <strong>Step 2: Wire it in src/cli.rs</strong></li>
+<p>In <code>Command</code>:</p>
+</ul>
+<pre><code class="lang-rust">    /// Download and install the latest release from GitHub (then refresh the skill)
+    Update {
+        /// Only report whether a newer release exists
+        #[arg(long)]
+        check: bool,
+        /// Do not refresh the bundled skill after updating
+        #[arg(long)]
+        skip_skill: bool,
+    },</code></pre>
+<p>In <code>run_command</code>:</p>
+<pre><code class="lang-rust">        Command::Update { check, skip_skill } =&gt; {
+            let result = commands::update::run(*check, *skip_skill)?;
+            Ok(Outcome { human: result.to_string(), json: result })
+        }</code></pre>
+<p>Move <code>let config_dir = index::config_dir()?;</code> inside the arms that need it (<code>Add</code>, <code>Code</code>, <code>List</code>, <code>Remove</code>) so <code>update</code> and <code>skill install</code> do not fail on a machine with no config dir. Add <code>pub mod update;</code> to <code>src/commands/mod.rs</code>.</p>
+<ul>
+<li class="step">[ ] <strong>Step 3: Run the tests</strong></li>
+<p>Run: <code>cargo test &amp;&amp; cargo fmt &amp;&amp; cargo clippy --all-targets -- -D warnings</code> Expected: all pass. <code>totp-cli update --check</code> is not tested against the network; it is verified manually in Task 12 after the first release exists.</p>
+<li class="step">[ ] <strong>Step 4: Write README.md</strong></li>
+<p>Cover, in this order and in the style of netsuite-cli's README: one-paragraph purpose; Install (release zip via <code>gh release download -R CreativePlanningBusinessServices/totp-cli --pattern "*aarch64-apple-darwin*"</code>, or <code>cargo install --git https://github.com/CreativePlanningBusinessServices/totp-cli</code>); Quick start (<code>add</code>, <code>code</code>, <code>list</code>, <code>remove</code> with real example output); Automation notes (<code>--min-remaining</code>, <code>--json</code> shapes, exit code table); Storage (keychain / Credential Manager, <code>accounts.toml</code> location per OS, <code>TOTP_CLI_CONFIG_DIR</code>, <code>TOTP_CLI_SECRET_STORE=file</code> labelled unencrypted); the one-time keychain "Always Allow" dialog on macOS after a rebuild; Updating (<code>update --check</code>, <code>update</code>, skill refresh); Agent skill (<code>skill install</code>); Development (<code>cargo test</code>, workflows). Every command example must be copy-paste correct against the implemented CLI.</p>
+<li class="step">[ ] <strong>Step 5: Commit</strong></li>
+</ul>
+<pre><code class="lang-bash">git add src README.md
+git commit -m "Add self-update command and README
+
+Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
+<hr>
+<h3 id="task-12">Task 12: GitHub repo, first release, macOS keychain verification</h3>
+<p>This task is the one that goes outward. It runs only after Jon has approved this plan; approval of the plan is the go-ahead for <code>gh repo create</code>.</p>
+<p><strong>Files:</strong> none new.</p>
+<ul>
+<li class="step">[ ] <strong>Step 1: Create the public repo and push</strong></li>
+</ul>
+<pre><code class="lang-bash">cd ~/projects/creativeplanning/totp-cli
+gh repo create CreativePlanningBusinessServices/totp-cli --public --source . --remote origin \
+  --description "Generate TOTP codes from secrets kept in the OS credential store" --push
+gh run watch "$(gh run list --limit 1 --json databaseId --jq '.[0].databaseId')" --exit-status   # CI: 3 OSes + lint</code></pre>
+<p>Expected: CI green on macOS, Windows and Linux. If Windows fails, fix on main before tagging.</p>
+<ul>
+<li class="step">[ ] <strong>Step 2: Tag and release v0.1.0</strong></li>
+</ul>
+<pre><code class="lang-bash">git tag v0.1.0 &amp;&amp; git push origin v0.1.0
+sleep 20 &amp;&amp; gh run watch "$(gh run list --workflow Release --limit 1 --json databaseId --jq '.[0].databaseId')" --exit-status
+gh release view v0.1.0 --json assets --jq '.assets[].name'</code></pre>
+<p>Expected: three zips named <code>totp-cli-v0.1.0-&lt;target&gt;.zip</code>.</p>
+<ul>
+<li class="step">[ ] <strong>Step 3: Install the release binary on this Mac and verify the keychain path end to end</strong></li>
+</ul>
+<pre><code class="lang-bash">cd "$(mktemp -d)" &amp;&amp; gh release download v0.1.0 -R CreativePlanningBusinessServices/totp-cli --pattern "*aarch64-apple-darwin*"
+unzip -o totp-cli-*.zip &amp;&amp; install -m 0755 totp-cli "$HOME/.local/bin/" &amp;&amp; cd - &gt;/dev/null
+totp-cli --version
+totp-cli add demo --secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ --issuer Demo
+totp-cli code demo --at 59          # expect 287082
+totp-cli --json code demo --min-remaining 5
+security find-generic-password -s totp-cli -a demo &gt;/dev/null &amp;&amp; echo "keychain item present"
+totp-cli list
+totp-cli remove demo
+security find-generic-password -s totp-cli -a demo 2&gt;&amp;1 | grep -q "could not be found" &amp;&amp; echo "keychain item gone"
+totp-cli update --check
+totp-cli skill install              # expect installed:true under ~/.claude/skills/totp-cli</code></pre>
+<p>Expected: codes match, the keychain item appears and disappears, <code>update --check</code> reports <code>updateAvailable:false</code>, the skill lands in <code>~/.claude/skills/totp-cli/SKILL.md</code>. macOS may show one keychain dialog on the first <code>code</code>; click Always Allow. If <code>~/.local/bin</code> is not on PATH, use <code>/opt/homebrew/bin</code> like netsuite-cli.</p>
+<ul>
+<li class="step">[ ] <strong>Step 4: Windows check</strong></li>
+<p>Jon has no Windows machine in this session. CI on <code>windows-latest</code> covers compile plus the full file-store test suite. Record in the Basecamp comment (Task 13) that the Credential Manager path is compiled but not yet exercised by hand, and ask Jon to run the Step 3 commands (minus <code>security</code>) on a Windows box when convenient.</p>
+</ul>
+<hr>
+<h3 id="task-13">Task 13: Wire into the NetSuite login flow and close out</h3>
+<p><strong>Files:</strong></p>
+<ul>
+<li>Modify: <code>~/.claude/CLAUDE.md</code> (NetSuite section, the 2FA bullet)</li>
+<li class="step">[ ] <strong>Step 1: Edit the 2FA bullet in ~/.claude/CLAUDE.md</strong></li>
+<p>Replace the bullet that begins "Only when the 30-day device trust has lapsed will it hit <strong>2FA</strong>" with:</p>
+</ul>
+<pre><code class="lang-markdown">- Only when the 30-day device trust has lapsed will it hit **2FA**. Fetch the code yourself:
+  `totp-cli code netsuite --min-remaining 5` (exit 0 prints the 6 digits). Check **"Trust this
+  device for 30 days"**, then fill and submit promptly. If totp-cli exits 2 with "no account
+  named 'netsuite'", the account is not enrolled yet — ask Jon for the code instead; never
+  guess. The vault has the password; totp-cli has the TOTP secret once Jon enrols it.</code></pre>
+<p>Also add one line to the NetSuite section's tooling notes: "<code>totp-cli</code> (installed on PATH; usage skill <code>totp-cli</code> in ~/.claude/skills) holds TOTP secrets in the macOS keychain."</p>
+<ul>
+<li class="step">[ ] <strong>Step 2: Tell Jon how to enrol the NetSuite secret</strong></li>
+<p>Jon does this himself; it needs NetSuite's 2FA reset flow (Settings portlet → Security → Two-Factor Authentication → reset) which shows a QR code and a text secret. Command:</p>
+</ul>
+<pre><code class="lang-bash">totp-cli add netsuite --issuer NetSuite      # prompts for the secret without echo
+# or, from the QR code's URI:
+totp-cli add netsuite --uri 'otpauth://totp/...'</code></pre>
+<p>He should also scan the same QR into his phone app so both stay in sync.</p>
+<ul>
+<li class="step">[ ] <strong>Step 3: Comment on Basecamp todo 520905368</strong></li>
+<p>Post a comment (via the Basecamp2 MCP <code>basecamp_create_comment</code>, project 8218129, todo 520905368) with: repo URL, release URL, the install one-liner, the enrol command, what changed in CLAUDE.md, and the note that Windows Credential Manager is compiled and CI-tested but not yet exercised by hand. Do not mark the todo complete; Jon decides.</p>
+<li class="step">[ ] <strong>Step 4: Save a memory note</strong></li>
+<p>Write a <code>project</code> memory in the memory dir: totp-cli exists, where it lives, that <code>totp-cli code netsuite</code> is the 2FA path once enrolled, and that enrolment is Jon's step. Add the index line to <code>MEMORY.md</code>.</p>
+</ul>
+<div class="choice-panel">
+  <p><strong>Review this plan, then choose how to execute it:</strong></p>
+  <a class="primary" href="http://127.0.0.1:8137/pick?c=native&amp;l=Native" target="_blank">Native — I implement it in this session, one reviewer at the end (recommended)</a>
+  <a href="http://127.0.0.1:8137/pick?c=subagent&amp;l=Subagent-driven" target="_blank">Subagent-driven — fresh implementer + reviewer per task</a>
+  <a href="http://127.0.0.1:8137/pick?c=changes&amp;l=Changes" target="_blank">Changes needed — I'll describe them in chat</a>
+  <p class="why">Recommendation: Native. The 13 tasks share tightly coupled interfaces (Secret, SecretStore, Index, Outcome) and total roughly 1,000 lines; one session holding all of them avoids interface drift, and the final whole-branch review still gives an independent check before release.</p>
+</div>
+</main>
+</body>
+</html>
