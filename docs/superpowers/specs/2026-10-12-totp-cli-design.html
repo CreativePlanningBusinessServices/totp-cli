@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>totp-cli — Design Spec</title>
+<style>
+  :root {
+    --ink: #1f2430; --muted: #5b6472; --accent: #0f6b54; --accent-soft: #e6f2ee;
+    --border: #d9dee6; --bg: #fafbfc; --card: #ffffff; --code-bg: #f2f4f7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2.5rem 1.5rem 4rem; background: var(--bg); color: var(--ink);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.8rem; margin: 0 0 .25rem; }
+  .subtitle { color: var(--muted); margin: 0 0 2rem; }
+  h2 { font-size: 1.2rem; margin: 2.25rem 0 .75rem; padding-bottom: .3rem; border-bottom: 2px solid var(--accent-soft); }
+  h3 { font-size: 1rem; margin: 1.5rem 0 .5rem; }
+  code { background: var(--code-bg); border-radius: 4px; padding: .1em .35em; font: .875em/1.5 "SF Mono", ui-monospace, Menlo, Consolas, monospace; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; overflow-x: auto; margin: 0 0 1rem; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 0 0 1rem; font-size: .93rem; }
+  th, td { border: 1px solid var(--border); padding: .45rem .7rem; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); }
+  .decision { background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 6px; padding: .75rem 1rem; margin: 0 0 .75rem; }
+  .decision strong { color: var(--accent); }
+  .choice-panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.5rem; margin: 1.5rem 0; text-align: center; }
+  .choice-panel a { display: inline-block; margin: .25rem .4rem; padding: .6rem 1.4rem; border-radius: 8px; text-decoration: none; font-weight: 600; border: 1px solid var(--border); color: var(--ink); }
+  .choice-panel a.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+<main>
+<h1>totp-cli — Design Spec</h1>
+<p class="subtitle">2026-10-12 · Basecamp todo <a href="https://basecamp.com/2808802/projects/8218129/todos/520905368">520905368</a> · new repo <code>CreativePlanningBusinessServices/totp-cli</code></p>
+
+<div class="choice-panel">
+  <p><strong>Review this spec, then choose:</strong></p>
+  <a class="primary" href="http://127.0.0.1:8137/pick?c=approve&amp;l=Approve" target="_blank">Approve — write the implementation plan</a>
+  <a href="http://127.0.0.1:8137/pick?c=changes&amp;l=Changes" target="_blank">Changes needed — I'll describe them in chat</a>
+</div>
+
+<h2>Problem</h2>
+<p>
+Automated logins driven by the agent (today: the agent-browser NetSuite session) stall whenever
+NetSuite asks for a 6-digit TOTP code, because the only authenticator is on Jon's phone. The todo
+asks for a CLI that stores a TOTP secret under a name and later prints the current code for that
+name, so the agent can answer the 2FA prompt itself.
+</p>
+
+<h2>Decisions already made with Jon</h2>
+<div class="decision"><strong>Purpose:</strong> primarily unattended use by the agent (NetSuite 2FA); also fine to run by hand.</div>
+<div class="decision"><strong>Language:</strong> Rust, following netsuite-cli / intacct-cli / clickup-cli conventions.</div>
+<div class="decision"><strong>Secret store:</strong> the OS credential store via the <code>keyring</code> crate — macOS Keychain and <strong>Windows Credential Manager</strong>. Both must work; the tool is not macOS-only.</div>
+<div class="decision"><strong>Repo:</strong> <code>totp-cli</code>, public, under the CreativePlanningBusinessServices GitHub org, in <code>~/projects/creativeplanning/totp-cli</code>. GitHub repo is created only after Jon approves this spec and the plan.</div>
+<div class="decision"><strong>v1 scope:</strong> <code>add</code> (bare secret or otpauth URI), <code>code</code>, <code>list</code>, <code>remove</code>, <code>--json</code>, plus <code>update</code> and <code>skill install</code> like the sibling CLIs.</div>
+<div class="decision"><strong>Follow-up:</strong> once released, change the NetSuite section of <code>~/.claude/CLAUDE.md</code> so the agent fetches the code with totp-cli instead of asking Jon.</div>
+
+<h2>Command surface</h2>
+<pre><code>totp-cli add &lt;name&gt; [--secret &lt;BASE32&gt; | --uri &lt;otpauth://...&gt;]
+                    [--digits 6] [--period 30] [--algorithm sha1|sha256|sha512]
+                    [--issuer &lt;text&gt;] [--force]
+totp-cli code &lt;name&gt; [--min-remaining &lt;secs&gt;]
+totp-cli list
+totp-cli remove &lt;name&gt;
+totp-cli skill install
+totp-cli update [--check]
+
+global: --json, --version, --help</code></pre>
+
+<h3><code>add</code></h3>
+<ul>
+  <li><code>&lt;name&gt;</code> is the local alias: 1–64 chars from <code>[A-Za-z0-9._-]</code>, case-sensitive. Anything else is a usage error.</li>
+  <li>Exactly one source of the secret: <code>--secret</code>, <code>--uri</code>, or neither. With neither, the secret is read from the terminal without echo (<code>rpassword</code>) so it stays out of shell history. Passing both is a usage error.</li>
+  <li><code>--uri</code> accepts the <code>otpauth://totp/...</code> URI behind a QR code and takes <code>secret</code>, <code>issuer</code>, <code>digits</code>, <code>period</code> and <code>algorithm</code> from it. Explicit flags override URI values. <code>otpauth://hotp/</code> is rejected.</li>
+  <li>Base32 secrets are normalised before storage: uppercase, whitespace and <code>-</code> removed, padding optional. A secret that does not decode is a usage error.</li>
+  <li>Defaults: 6 digits, 30-second period, SHA-1. Allowed digits: 6–8. Period must be ≥ 1.</li>
+  <li>If the name already exists, fail unless <code>--force</code>, which replaces both the secret and the index entry.</li>
+  <li>Order of writes: secret into the credential store first, then the index file. If the index write fails, the just-written secret is deleted again so the two never disagree.</li>
+  <li>Human output: <code>added netsuite</code>. JSON: <code>{"name":"netsuite","issuer":"NetSuite","digits":6,"period":30,"algorithm":"sha1"}</code>. The secret is never echoed.</li>
+</ul>
+
+<h3><code>code</code></h3>
+<ul>
+  <li>Prints the current code and a newline, nothing else: <code>123456</code>. Codes are zero-padded to <code>digits</code>.</li>
+  <li><code>--min-remaining &lt;secs&gt;</code>: if the current code expires in fewer than that many seconds, sleep until the next period starts and print that code instead. Default 0 (never wait). This stops an automated login from submitting a code that rolls over while the form is being filled.</li>
+  <li>JSON: <code>{"name":"netsuite","code":"123456","expires_in":17,"period":30}</code>.</li>
+  <li>Hidden <code>--at &lt;unix-seconds&gt;</code> flag computes the code for a fixed time. Used by the integration tests and for debugging clock skew; not shown in <code>--help</code>.</li>
+  <li>Unknown name → exit 2. Name present in the index but secret missing from the store → exit 3 with a message suggesting <code>add --force</code>.</li>
+</ul>
+
+<h3><code>list</code></h3>
+<ul>
+  <li>Human: one name per line, sorted, from the index file only. The credential store is not touched.</li>
+  <li>JSON: array of <code>{"name","issuer","digits","period","algorithm"}</code>. Never includes secrets.</li>
+</ul>
+
+<h3><code>remove</code></h3>
+<ul>
+  <li>Deletes the credential-store entry, then the index entry. A missing store entry is not an error, so a half-removed account can always be cleaned up.</li>
+  <li>Unknown name → exit 2.</li>
+</ul>
+
+<h3><code>skill install</code> and <code>update</code></h3>
+<p>
+Same behaviour as netsuite-cli: <code>skill install</code> writes the embedded <code>SKILL.md</code>
+to <code>$CLAUDE_CONFIG_DIR</code> or <code>~/.claude</code> under <code>skills/totp-cli/SKILL.md</code>,
+skipping a symlinked or identical copy. <code>update</code> uses <code>self_update</code> against
+GitHub Releases of <code>CreativePlanningBusinessServices/totp-cli</code>, then refreshes the skill.
+<code>update --check</code> only reports.
+</p>
+
+<h2>Storage</h2>
+<h3>Secrets: OS credential store</h3>
+<table>
+<tr><th>Platform</th><th>Backend</th><th>Notes</th></tr>
+<tr><td>macOS</td><td>Keychain via <code>keyring</code> feature <code>apple-native</code></td><td>Service <code>totp-cli</code>, account = name. First access by a new binary build may show one keychain dialog; "Always Allow" makes later reads unattended.</td></tr>
+<tr><td>Windows</td><td>Credential Manager via <code>keyring</code> feature <code>windows-native</code></td><td>Generic credential keyed on <code>totp-cli</code> + name. Credential Manager caps blobs at 2560 bytes, far above any TOTP secret, so no chunking.</td></tr>
+<tr><td>Linux / CI</td><td>File store (below)</td><td>No credential-store features are enabled for Linux, so the OS backend is unavailable there; <code>TOTP_CLI_SECRET_STORE=file</code> is required.</td></tr>
+</table>
+<p>
+Only the base32 secret goes in the credential store. Everything else lives in the index file, because
+the <code>keyring</code> crate cannot enumerate entries and <code>list</code> needs to.
+</p>
+
+<h3>Index: <code>accounts.toml</code></h3>
+<pre><code>[accounts.netsuite]
+issuer = "NetSuite"
+digits = 6
+period = 30
+algorithm = "sha1"</code></pre>
+<p>
+Location is the <code>directories</code> config dir for
+<code>ProjectDirs::from("com", "CreativePlanning", "totp-cli")</code>:
+<code>~/Library/Application Support/com.CreativePlanning.totp-cli/</code> on macOS,
+<code>%APPDATA%\CreativePlanning\totp-cli\config\</code> on Windows, <code>~/.config/totp-cli/</code> on Linux.
+<code>TOTP_CLI_CONFIG_DIR</code> overrides it. The file is written atomically (temp file + rename) and
+created with mode 0600 on Unix.
+</p>
+
+<h3>Test / fallback file store</h3>
+<p>
+<code>TOTP_CLI_SECRET_STORE=file</code> swaps the credential store for <code>secrets.toml</code> in the
+config dir (0600 on Unix). It exists so the test suite and Linux CI never touch a real keychain, and
+as an escape hatch for headless Linux hosts. The README labels it as unencrypted at rest.
+</p>
+
+<h2>TOTP core</h2>
+<ul>
+  <li>RFC 4226 HOTP + RFC 6238 TOTP implemented directly with the <code>hmac</code>, <code>sha1</code> and <code>sha2</code> crates. Roughly 40 lines; no <code>totp-rs</code> dependency.</li>
+  <li>Counter = <code>floor(unix_time / period)</code>; dynamic truncation; code = value mod 10^digits, zero-padded.</li>
+  <li>Verified against the RFC 6238 Appendix B vectors for SHA-1, SHA-256 and SHA-512 at all six reference times, and RFC 4226 Appendix D HOTP vectors.</li>
+  <li>Base32 decoding uses the <code>data-encoding</code> crate with the lenient normalisation described under <code>add</code>.</li>
+  <li>otpauth URI parsing uses the <code>url</code> crate; the label (<code>Issuer:account</code>) only supplies a default issuer when the <code>issuer</code> query parameter is absent.</li>
+</ul>
+
+<h2>Code layout</h2>
+<table>
+<tr><th>Module</th><th>Responsibility</th></tr>
+<tr><td><code>main.rs</code></td><td>Parse CLI, dispatch, map <code>CliError</code> to exit code and stderr output.</td></tr>
+<tr><td><code>cli.rs</code></td><td>clap derive definitions.</td></tr>
+<tr><td><code>commands/</code></td><td>One file per subcommand: <code>add.rs</code>, <code>code.rs</code>, <code>list.rs</code>, <code>remove.rs</code>, <code>skill.rs</code>, <code>update.rs</code>.</td></tr>
+<tr><td><code>totp.rs</code></td><td>HOTP/TOTP math, <code>Algorithm</code> enum, <code>expires_in</code>.</td></tr>
+<tr><td><code>otpauth.rs</code></td><td>URI parsing into an <code>AccountParams</code> + secret.</td></tr>
+<tr><td><code>secret.rs</code></td><td>Base32 normalisation/decoding, <code>Secret</code> newtype that zeroises on drop and never implements <code>Debug</code>/<code>Display</code>.</td></tr>
+<tr><td><code>index.rs</code></td><td>Load/save <code>accounts.toml</code>, config-dir resolution.</td></tr>
+<tr><td><code>store.rs</code></td><td><code>SecretStore</code> trait (<code>get</code>, <code>set</code>, <code>delete</code>); <code>KeyringStore</code> and <code>FileStore</code> implementations; selection by env var.</td></tr>
+<tr><td><code>error.rs</code></td><td><code>CliError</code> with <code>exit_code()</code>.</td></tr>
+<tr><td><code>output.rs</code></td><td>Human vs JSON printing.</td></tr>
+</table>
+
+<h2>Errors and exit codes</h2>
+<table>
+<tr><th>Code</th><th>Meaning</th><th>Examples</th></tr>
+<tr><td>0</td><td>Success</td><td></td></tr>
+<tr><td>1</td><td>Internal / I/O</td><td>Index file unreadable, update download failed.</td></tr>
+<tr><td>2</td><td>Usage</td><td>Bad name, bad base32, bad URI, unknown account, duplicate without <code>--force</code>.</td></tr>
+<tr><td>3</td><td>Secret store</td><td>Keychain / Credential Manager unavailable or denied; secret missing for an indexed account.</td></tr>
+</table>
+<p>
+Errors go to stderr as <code>error: &lt;message&gt;</code>, or as
+<code>{"error":"&lt;message&gt;","exit_code":N}</code> when <code>--json</code> is set. stdout stays
+clean so <code>$(totp-cli code netsuite)</code> is safe in scripts.
+</p>
+
+<h2>Testing</h2>
+<ul>
+  <li>Unit: RFC vectors for HOTP/TOTP; base32 normalisation (lowercase, spaces, no padding, invalid chars); URI parsing (full, minimal, hotp rejected, label-only issuer); name validation; <code>expires_in</code> at period boundaries.</li>
+  <li>Integration (<code>assert_cmd</code>): each command against a temp <code>TOTP_CLI_CONFIG_DIR</code> with <code>TOTP_CLI_SECRET_STORE=file</code>: add → code (<code>--at</code> fixed time, known expected code) → list → remove → code fails with exit 2; duplicate add without/with <code>--force</code>; JSON shapes; error exit codes.</li>
+  <li><code>KeyringStore</code> is exercised manually on macOS and Windows before the first release; it is a thin wrapper over a crate the sibling CLIs already ship.</li>
+  <li>CI (<code>ci.yml</code>, copied from netsuite-cli): <code>cargo test --locked</code> on macos-latest, windows-latest, ubuntu-latest; <code>cargo fmt --check</code> and <code>cargo clippy -D warnings</code>.</li>
+</ul>
+
+<h2>Repo, release, skill</h2>
+<ul>
+  <li>Files: <code>Cargo.toml</code>, <code>src/</code>, <code>tests/</code>, <code>skills/totp-cli/SKILL.md</code>, <code>README.md</code>, <code>.github/workflows/{ci,release}.yml</code>, <code>.gitignore</code>, <code>docs/superpowers/</code>.</li>
+  <li><code>release.yml</code> builds on <code>v*</code> tags for <code>aarch64-apple-darwin</code>, <code>x86_64-apple-darwin</code>, <code>x86_64-pc-windows-msvc</code>; zip assets named like netsuite-cli's so <code>self_update</code> finds them.</li>
+  <li>Dependencies: clap, keyring (apple-native, windows-native), directories, toml, serde, serde_json, thiserror, hmac, sha1, sha2, data-encoding, url, rpassword, zeroize, self_update. Dev: assert_cmd, predicates, tempfile.</li>
+  <li><code>SKILL.md</code>: when to use, the command table, the "login asks for a 6-digit code → <code>totp-cli code &lt;name&gt; --min-remaining 5</code>" recipe, exit-code triage, and the rule that a missing account (exit 2) means ask Jon rather than guess.</li>
+  <li>After the first release: edit the NetSuite section of <code>~/.claude/CLAUDE.md</code> to run <code>totp-cli code netsuite --min-remaining 5</code> at the 2FA step, falling back to asking Jon only when the account is not enrolled. Jon enrols the NetSuite secret himself.</li>
+</ul>
+
+<h2>Out of scope for v1</h2>
+<ul>
+  <li>HOTP counters, Steam-style codes, QR image decoding, import/export of whole account sets, rename, encrypted-file store on macOS/Windows, Linux credential-store backends.</li>
+</ul>
+
+<div class="choice-panel">
+  <p><strong>Review this spec, then choose:</strong></p>
+  <a class="primary" href="http://127.0.0.1:8137/pick?c=approve&amp;l=Approve" target="_blank">Approve — write the implementation plan</a>
+  <a href="http://127.0.0.1:8137/pick?c=changes&amp;l=Changes" target="_blank">Changes needed — I'll describe them in chat</a>
+</div>
+</main>
+</body>
+</html>
