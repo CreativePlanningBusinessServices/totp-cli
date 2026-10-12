@@ -1,0 +1,3 @@
+# SKILL.md is embedded via include_str! and written back out by `skill install`;
+# force LF so the bytes match on every platform.
+skills/totp-cli/SKILL.md text eol=lf
