@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::atomic_file;
 use crate::error::CliError;
 use crate::totp::Algorithm;
 
@@ -45,26 +46,10 @@ impl Index {
         })
     }
 
-    /// Writes to a sibling temp file and renames over the target so a crash mid-write
-    /// never leaves a truncated index behind.
     pub fn save(&self, config_dir: &Path) -> Result<(), CliError> {
-        std::fs::create_dir_all(config_dir).map_err(|io_error| {
-            CliError::Io(format!(
-                "cannot create {}: {io_error}",
-                config_dir.display()
-            ))
-        })?;
-        let path = config_dir.join(INDEX_FILE);
-        let temp_path = config_dir.join(format!("{INDEX_FILE}.tmp"));
         let contents = toml::to_string_pretty(self)
             .map_err(|toml_error| CliError::Io(format!("cannot serialise index: {toml_error}")))?;
-        std::fs::write(&temp_path, contents).map_err(|io_error| {
-            CliError::Io(format!("cannot write {}: {io_error}", temp_path.display()))
-        })?;
-        restrict_permissions(&temp_path)?;
-        std::fs::rename(&temp_path, &path).map_err(|io_error| {
-            CliError::Io(format!("cannot replace {}: {io_error}", path.display()))
-        })
+        atomic_file::write_private(&config_dir.join(INDEX_FILE), &contents).map_err(CliError::Io)
     }
 }
 
@@ -102,22 +87,6 @@ pub fn validate_name(name: &str) -> Result<(), CliError> {
             "invalid account name '{name}': use 1-{MAX_NAME_LENGTH} characters from A-Z, a-z, 0-9, '.', '_' and '-'"
         )));
     }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn restrict_permissions(path: &Path) -> Result<(), CliError> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|io_error| {
-        CliError::Io(format!(
-            "cannot set permissions on {}: {io_error}",
-            path.display()
-        ))
-    })
-}
-
-#[cfg(not(unix))]
-fn restrict_permissions(_path: &Path) -> Result<(), CliError> {
     Ok(())
 }
 

@@ -95,7 +95,11 @@ fn build_updater() -> Result<Box<dyn self_update::update::ReleaseUpdate>, CliErr
         .repo_owner(REPO_OWNER)
         .repo_name(REPO_NAME)
         .bin_name("totp-cli")
+        // self_update otherwise prints progress to stdout and asks "[Y/n]" on stdin, which
+        // would break `--json` consumers and hang unattended runs.
+        .show_output(false)
         .show_download_progress(false)
+        .no_confirm(true)
         .current_version(env!("CARGO_PKG_VERSION"));
     if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
         updater.auth_token(&github_token);

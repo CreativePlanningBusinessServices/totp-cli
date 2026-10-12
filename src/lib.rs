@@ -1,3 +1,4 @@
+pub mod atomic_file;
 pub mod cli;
 pub mod commands;
 pub mod error;

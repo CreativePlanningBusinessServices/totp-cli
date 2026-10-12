@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::atomic_file;
 use crate::error::CliError;
 use crate::secret::Secret;
 
@@ -126,18 +127,10 @@ impl FileStore {
     }
 
     fn write_all(&self, entries: &BTreeMap<String, String>) -> Result<(), CliError> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|io_error| {
-                CliError::Store(format!("cannot create {}: {io_error}", parent.display()))
-            })?;
-        }
         let contents = toml::to_string(entries).map_err(|toml_error| {
             CliError::Store(format!("cannot serialise secrets: {toml_error}"))
         })?;
-        std::fs::write(&self.path, contents).map_err(|io_error| {
-            CliError::Store(format!("cannot write {}: {io_error}", self.path.display()))
-        })?;
-        restrict_permissions(&self.path)
+        atomic_file::write_private(&self.path, &contents).map_err(CliError::Store)
     }
 }
 
@@ -162,22 +155,6 @@ impl SecretStore for FileStore {
         }
         Ok(())
     }
-}
-
-#[cfg(unix)]
-fn restrict_permissions(path: &Path) -> Result<(), CliError> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|io_error| {
-        CliError::Store(format!(
-            "cannot set permissions on {}: {io_error}",
-            path.display()
-        ))
-    })
-}
-
-#[cfg(not(unix))]
-fn restrict_permissions(_path: &Path) -> Result<(), CliError> {
-    Ok(())
 }
 
 #[cfg(test)]
@@ -237,6 +214,25 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn file_store_writes_through_a_temp_file_and_leaves_none_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let stale_temp = dir.path().join(format!("{SECRETS_FILE}.tmp"));
+        std::fs::write(&stale_temp, "stale").unwrap();
+        FileStore::new(dir.path())
+            .set("a", &secret("GEZDGNBVGY3TQOJQ"))
+            .unwrap();
+        assert!(
+            !stale_temp.exists(),
+            "temp file must be renamed over the target"
+        );
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec![SECRETS_FILE.to_string()]);
     }
 
     #[test]
