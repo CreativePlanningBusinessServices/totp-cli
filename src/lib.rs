@@ -1,6 +1,9 @@
+pub mod cli;
+pub mod commands;
 pub mod error;
 pub mod index;
 pub mod otpauth;
+pub mod output;
 pub mod secret;
 pub mod store;
 pub mod totp;
