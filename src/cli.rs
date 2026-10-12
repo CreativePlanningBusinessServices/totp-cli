@@ -26,6 +26,8 @@ pub struct Cli {
 pub enum Command {
     /// Store a TOTP secret under a name
     Add(AddArgs),
+    /// Print the current code for a stored account
+    Code(CodeArgs),
     /// Print the names of the stored accounts (never the secrets)
     List,
 }
@@ -57,6 +59,18 @@ pub struct AddArgs {
     pub force: bool,
 }
 
+#[derive(clap::Args)]
+pub struct CodeArgs {
+    /// Account name given to `add`
+    pub name: String,
+    /// If the current code expires in fewer than this many seconds, wait for the next one
+    #[arg(long, default_value_t = 0, value_name = "SECS")]
+    pub min_remaining: u64,
+    /// Compute the code for this Unix time instead of now (testing / clock-skew debugging)
+    #[arg(long, hide = true)]
+    pub at: Option<u64>,
+}
+
 pub fn cli_main() -> u8 {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -81,6 +95,10 @@ fn run_command(command: &Command) -> Result<Outcome, CliError> {
         Command::Add(args) => {
             let store = store::open_store(&config_dir)?;
             commands::add::run(args, &config_dir, store.as_ref())
+        }
+        Command::Code(args) => {
+            let store = store::open_store(&config_dir)?;
+            commands::code::run(args, &config_dir, store.as_ref())
         }
         Command::List => commands::list::run(&config_dir),
     }
