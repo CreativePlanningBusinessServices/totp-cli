@@ -35,6 +35,21 @@ pub enum Command {
         /// Account name given to `add`
         name: String,
     },
+    /// Install or refresh the bundled agent skill (SKILL.md)
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SkillAction {
+    /// Write the embedded SKILL.md to your Claude skills dir (skips a symlinked copy)
+    Install {
+        /// Target directory (or SKILL.md path) instead of ~/.claude/skills/totp-cli
+        #[arg(long)]
+        dir: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(clap::Args)]
@@ -109,6 +124,16 @@ fn run_command(command: &Command) -> Result<Outcome, CliError> {
         Command::Remove { name } => {
             let store = store::open_store(&config_dir)?;
             commands::remove::run(name, &config_dir, store.as_ref())
+        }
+        // Always JSON, like netsuite-cli, so `update` can parse the child's output.
+        Command::Skill {
+            action: SkillAction::Install { dir },
+        } => {
+            let result = commands::skill::install(dir.as_deref())?;
+            Ok(Outcome {
+                human: result.to_string(),
+                json: result,
+            })
         }
     }
 }
