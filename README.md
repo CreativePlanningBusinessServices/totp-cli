@@ -5,11 +5,11 @@ Windows Credential Manager. Built so an agent can answer a 2FA prompt itself: th
 thing on stdout, errors go to stderr, exit codes are fixed.
 
 ```bash
-totp-cli add netsuite --issuer NetSuite      # prompts for the base32 secret without echo
-totp-cli code netsuite                       # → 287082
-totp-cli code netsuite --min-remaining 5     # waits for the next code if this one is about to expire
-totp-cli list                                # → netsuite
-totp-cli remove netsuite
+totp-cli add netsuite-prod --issuer NetSuite   # prompts for the base32 secret without echo
+totp-cli code netsuite-prod                    # → 287082
+totp-cli code netsuite-prod --min-remaining 5  # waits for the next code if this one is about to expire
+totp-cli list                                  # → netsuite-prod
+totp-cli remove netsuite-prod
 ```
 
 ## Install
@@ -50,8 +50,8 @@ totp-cli add <name> [--secret <BASE32> | --uri 'otpauth://totp/...']
 - An existing name is refused unless you pass `--force`.
 
 ```
-$ totp-cli add netsuite --secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ --issuer NetSuite
-added netsuite
+$ totp-cli add netsuite-prod --secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ --issuer NetSuite
+added netsuite-prod
 $ totp-cli --json add ns --uri 'otpauth://totp/NetSuite:jon?secret=GEZDGNBVGY3TQOJQ&digits=8'
 {"algorithm":"sha1","digits":8,"issuer":"NetSuite","name":"ns","period":30}
 ```
@@ -63,10 +63,10 @@ totp-cli code <name> [--min-remaining <secs>]
 ```
 
 ```
-$ totp-cli code netsuite
+$ totp-cli code netsuite-prod
 287082
-$ totp-cli --json code netsuite
-{"code":"287082","expires_in":17,"name":"netsuite","period":30}
+$ totp-cli --json code netsuite-prod
+{"code":"287082","expires_in":17,"name":"netsuite-prod","period":30}
 ```
 
 `--min-remaining N` makes `code` wait for the next period when the current code expires in fewer
@@ -77,11 +77,11 @@ less than the account's period.
 
 ```
 $ totp-cli list
-netsuite
+netsuite-prod
 $ totp-cli --json list
-[{"algorithm":"sha1","digits":6,"issuer":"NetSuite","name":"netsuite","period":30}]
-$ totp-cli remove netsuite
-removed netsuite
+[{"algorithm":"sha1","digits":6,"issuer":"NetSuite","name":"netsuite-prod","period":30}]
+$ totp-cli remove netsuite-prod
+removed netsuite-prod
 ```
 
 `list` never prints secrets; it reads only the index file.
@@ -90,7 +90,7 @@ removed netsuite
 
 - `--json` is a global flag. Successful output is one JSON value on stdout; errors become
   `{"error":"<message>","exit_code":N}` on stderr. Without `--json`, errors are `error: <message>`.
-- stdout carries only the result, so `code=$(totp-cli code netsuite)` is safe.
+- stdout carries only the result, so `code=$(totp-cli code netsuite-prod)` is safe.
 
 | Exit code | Meaning | Examples |
 |---|---|---|

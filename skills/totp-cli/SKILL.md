@@ -26,8 +26,12 @@ Full reference: `totp-cli <subcommand> --help`.
 ## Recipe: a login page asks for a 2FA code
 
 ```bash
-code=$(totp-cli code netsuite --min-remaining 5) || exit_code=$?
+code=$(totp-cli code netsuite-prod --min-remaining 5) || exit_code=$?
 ```
+
+Account names follow the convention `<service>-<environment>`, mirroring netsuite-cli's
+aliases: `netsuite-prod` (production) and `netsuite-sb2` (Sandbox 2). Run `totp-cli list` to
+see what is enrolled; never guess a name.
 
 - Exit 0: `$code` is the 6-digit value; type it into the form and submit promptly.
 - Exit 2 with "no account named": the account is not enrolled. **Ask the user** for the code
