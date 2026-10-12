@@ -30,6 +30,11 @@ pub enum Command {
     Code(CodeArgs),
     /// Print the names of the stored accounts (never the secrets)
     List,
+    /// Delete a stored account and its secret
+    Remove {
+        /// Account name given to `add`
+        name: String,
+    },
 }
 
 #[derive(clap::Args)]
@@ -101,6 +106,10 @@ fn run_command(command: &Command) -> Result<Outcome, CliError> {
             commands::code::run(args, &config_dir, store.as_ref())
         }
         Command::List => commands::list::run(&config_dir),
+        Command::Remove { name } => {
+            let store = store::open_store(&config_dir)?;
+            commands::remove::run(name, &config_dir, store.as_ref())
+        }
     }
 }
 
