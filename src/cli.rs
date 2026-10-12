@@ -40,6 +40,15 @@ pub enum Command {
         #[command(subcommand)]
         action: SkillAction,
     },
+    /// Download and install the latest release from GitHub (then refresh the skill)
+    Update {
+        /// Only report whether a newer release exists
+        #[arg(long)]
+        check: bool,
+        /// Do not refresh the bundled skill after updating
+        #[arg(long)]
+        skip_skill: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -110,18 +119,20 @@ pub fn cli_main() -> u8 {
 }
 
 fn run_command(command: &Command) -> Result<Outcome, CliError> {
-    let config_dir = index::config_dir()?;
     match command {
         Command::Add(args) => {
+            let config_dir = index::config_dir()?;
             let store = store::open_store(&config_dir)?;
             commands::add::run(args, &config_dir, store.as_ref())
         }
         Command::Code(args) => {
+            let config_dir = index::config_dir()?;
             let store = store::open_store(&config_dir)?;
             commands::code::run(args, &config_dir, store.as_ref())
         }
-        Command::List => commands::list::run(&config_dir),
+        Command::List => commands::list::run(&index::config_dir()?),
         Command::Remove { name } => {
+            let config_dir = index::config_dir()?;
             let store = store::open_store(&config_dir)?;
             commands::remove::run(name, &config_dir, store.as_ref())
         }
@@ -130,6 +141,13 @@ fn run_command(command: &Command) -> Result<Outcome, CliError> {
             action: SkillAction::Install { dir },
         } => {
             let result = commands::skill::install(dir.as_deref())?;
+            Ok(Outcome {
+                human: result.to_string(),
+                json: result,
+            })
+        }
+        Command::Update { check, skip_skill } => {
+            let result = commands::update::run(*check, *skip_skill)?;
             Ok(Outcome {
                 human: result.to_string(),
                 json: result,

@@ -3,3 +3,4 @@ pub mod code;
 pub mod list;
 pub mod remove;
 pub mod skill;
+pub mod update;
