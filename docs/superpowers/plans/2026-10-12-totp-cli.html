@@ -99,7 +99,7 @@
 <li>Modify: <code>.gitignore</code> (already has <code>/target</code>)</li>
 <p><strong>Interfaces:</strong></p>
 <li>Produces: <code>CliError::{Io(String), Usage(String), Store(String)}</code>, <code>CliError::exit_code() -&gt; u8</code>, <code>CliError::to_json() -&gt; serde_json::Value</code>.</li>
-<li class="step">[ ] <strong>Step 1: Write Cargo.toml</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 1: Write Cargo.toml</strong></li>
 </ul>
 <pre><code class="lang-toml">[package]
 name = "totp-cli"
@@ -132,7 +132,7 @@ assert_cmd = "2"
 predicates = "3"
 tempfile = "3"</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 2: Write the failing exit-code test inside src/error.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 2: Write the failing exit-code test inside src/error.rs</strong></li>
 </ul>
 <pre><code class="lang-rust">use serde_json::{Value, json};
 
@@ -170,7 +170,7 @@ mod tests {
     }
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 3: Add lib.rs and main.rs so the crate compiles, then run the test to see it fail</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 3: Add lib.rs and main.rs so the crate compiles, then run the test to see it fail</strong></li>
 <p><code>src/lib.rs</code>:</p>
 </ul>
 <pre><code class="lang-rust">pub mod error;</code></pre>
@@ -181,7 +181,7 @@ mod tests {
 <p>For now <code>cli</code> does not exist, so make main.rs temporarily <code>fn main() {}</code> and restore the line above in Task 7.</p>
 <p>Run: <code>cargo test --lib</code> Expected: compile error, <code>no method named exit_code</code>.</p>
 <ul>
-<li class="step">[ ] <strong>Step 4: Implement exit_code and to_json above the tests module</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 4: Implement exit_code and to_json above the tests module</strong></li>
 </ul>
 <pre><code class="lang-rust">impl CliError {
     pub fn exit_code(&amp;self) -&gt; u8 {
@@ -198,7 +198,7 @@ mod tests {
 }</code></pre>
 <p>Run: <code>cargo test --lib</code> Expected: 2 passed.</p>
 <ul>
-<li class="step">[ ] <strong>Step 5: Add .gitattributes and the two workflows</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 5: Add .gitattributes and the two workflows</strong></li>
 <p><code>.gitattributes</code>:</p>
 </ul>
 <pre><code># SKILL.md is embedded via include_str! and written back out by `skill install`;
@@ -306,7 +306,7 @@ jobs:
         with:
           files: dist/*.zip</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 6: Build, format and commit</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 6: Build, format and commit</strong></li>
 <p>Run: <code>cargo build &amp;&amp; cargo fmt --check &amp;&amp; cargo clippy --all-targets -- -D warnings</code> Expected: builds clean (unused-import warnings in main.rs are acceptable only if clippy stays silent; otherwise keep main.rs as the empty <code>fn main() {}</code>).</p>
 </ul>
 <pre><code class="lang-bash">git add Cargo.toml Cargo.lock src .gitattributes .github
@@ -327,7 +327,7 @@ Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
 <li><code>pub fn totp(key: &amp;[u8], unix_time: u64, period: u64, digits: u32, algorithm: Algorithm) -&gt; String</code></li>
 <li><code>pub fn expires_in(unix_time: u64, period: u64) -&gt; u64</code></li>
 </ul>
-<li class="step">[ ] <strong>Step 1: Write the failing tests at the bottom of src/totp.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 1: Write the failing tests at the bottom of src/totp.rs</strong></li>
 </ul>
 <pre><code class="lang-rust">#[cfg(test)]
 mod tests {
@@ -387,9 +387,9 @@ mod tests {
     }
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 2: Run to verify failure</strong></li>
 <p>Run: <code>cargo test --lib totp</code> Expected: compile errors, <code>Algorithm</code>/<code>hotp</code>/<code>totp</code>/<code>expires_in</code> not found.</p>
-<li class="step">[ ] <strong>Step 3: Implement src/totp.rs above the tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 3: Implement src/totp.rs above the tests</strong></li>
 </ul>
 <pre><code class="lang-rust">use std::str::FromStr;
 
@@ -468,9 +468,9 @@ impl FromStr for Algorithm {
 }</code></pre>
 <p>Add <code>pub mod totp;</code> to <code>src/lib.rs</code>.</p>
 <ul>
-<li class="step">[ ] <strong>Step 4: Run tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 4: Run tests</strong></li>
 <p>Run: <code>cargo test --lib totp</code> Expected: 5 passed.</p>
-<li class="step">[ ] <strong>Step 5: Commit</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 5: Commit</strong></li>
 </ul>
 <pre><code class="lang-bash">git add src/totp.rs src/lib.rs
 git commit -m "Add RFC 4226/6238 HOTP and TOTP core with RFC test vectors
@@ -491,7 +491,7 @@ Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
 <li><code>Secret::as_base32(&amp;self) -&gt; &amp;str</code> (normalised, uppercase, unpadded)</li>
 <li><code>Secret::key_bytes(&amp;self) -&gt; Zeroizing&lt;Vec&lt;u8&gt;&gt;</code></li>
 </ul>
-<li class="step">[ ] <strong>Step 1: Write the failing tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 1: Write the failing tests</strong></li>
 </ul>
 <pre><code class="lang-rust">#[cfg(test)]
 mod tests {
@@ -522,9 +522,9 @@ mod tests {
     }
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 2: Run to verify failure</strong></li>
 <p>Run: <code>cargo test --lib secret</code> Expected: compile error, <code>Secret</code> not found.</p>
-<li class="step">[ ] <strong>Step 3: Implement</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 3: Implement</strong></li>
 </ul>
 <pre><code class="lang-rust">use data_encoding::BASE32_NOPAD;
 use zeroize::Zeroizing;
@@ -574,9 +574,9 @@ impl Secret {
 }</code></pre>
 <p>Add <code>pub mod secret;</code> to <code>src/lib.rs</code>.</p>
 <ul>
-<li class="step">[ ] <strong>Step 4: Run tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 4: Run tests</strong></li>
 <p>Run: <code>cargo test --lib secret</code> Expected: 4 passed.</p>
-<li class="step">[ ] <strong>Step 5: Commit</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 5: Commit</strong></li>
 </ul>
 <pre><code class="lang-bash">git add src/secret.rs src/lib.rs
 git commit -m "Add Secret newtype with lenient base32 normalisation
@@ -595,7 +595,7 @@ Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
 <li><code>pub struct ParsedUri { pub secret: Secret, pub issuer: Option&lt;String&gt;, pub digits: Option&lt;u32&gt;, pub period: Option&lt;u64&gt;, pub algorithm: Option&lt;Algorithm&gt; }</code></li>
 <li><code>pub fn parse(uri: &amp;str) -&gt; Result&lt;ParsedUri, CliError&gt;</code></li>
 </ul>
-<li class="step">[ ] <strong>Step 1: Write the failing tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 1: Write the failing tests</strong></li>
 </ul>
 <pre><code class="lang-rust">#[cfg(test)]
 mod tests {
@@ -644,9 +644,9 @@ mod tests {
     }
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 2: Run to verify failure</strong></li>
 <p>Run: <code>cargo test --lib otpauth</code> Expected: compile error, <code>parse</code> not found.</p>
-<li class="step">[ ] <strong>Step 3: Implement</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 3: Implement</strong></li>
 </ul>
 <pre><code class="lang-rust">use percent_encoding::percent_decode_str;
 use url::Url;
@@ -717,9 +717,9 @@ fn parse_number&lt;Number: std::str::FromStr&gt;(field: &amp;str, value: &amp;st
 }</code></pre>
 <p>Add <code>pub mod otpauth;</code> to <code>src/lib.rs</code>.</p>
 <ul>
-<li class="step">[ ] <strong>Step 4: Run tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 4: Run tests</strong></li>
 <p>Run: <code>cargo test --lib otpauth</code> Expected: 5 passed.</p>
-<li class="step">[ ] <strong>Step 5: Commit</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 5: Commit</strong></li>
 </ul>
 <pre><code class="lang-bash">git add src/otpauth.rs src/lib.rs
 git commit -m "Parse otpauth://totp URIs into secret and account parameters
@@ -743,7 +743,7 @@ Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
 <li><code>pub fn validate_name(name: &amp;str) -&gt; Result&lt;(), CliError&gt;</code></li>
 <li><code>pub const INDEX_FILE: &amp;str = "accounts.toml";</code></li>
 </ul>
-<li class="step">[ ] <strong>Step 1: Write the failing tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 1: Write the failing tests</strong></li>
 </ul>
 <pre><code class="lang-rust">#[cfg(test)]
 mod tests {
@@ -851,9 +851,9 @@ mod tests {
     }
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 2: Run to verify failure</strong></li>
 <p>Run: <code>cargo test --lib index</code> Expected: compile errors, <code>Index</code>/<code>AccountParams</code> not found.</p>
-<li class="step">[ ] <strong>Step 3: Implement</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 3: Implement</strong></li>
 </ul>
 <pre><code class="lang-rust">use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -959,9 +959,9 @@ fn restrict_permissions(_path: &amp;Path) -&gt; Result&lt;(), CliError&gt; {
 }</code></pre>
 <p>Add <code>pub mod index;</code> to <code>src/lib.rs</code>.</p>
 <ul>
-<li class="step">[ ] <strong>Step 4: Run tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 4: Run tests</strong></li>
 <p>Run: <code>cargo test --lib index</code> Expected: 8 passed (7 on Windows, where the permissions test is compiled out).</p>
-<li class="step">[ ] <strong>Step 5: Commit</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 5: Commit</strong></li>
 </ul>
 <pre><code class="lang-bash">git add src/index.rs src/lib.rs
 git commit -m "Add accounts.toml index with atomic save and name validation
@@ -983,7 +983,7 @@ Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
 <li><code>pub fn open_store(config_dir: &amp;Path) -&gt; Result&lt;Box&lt;dyn SecretStore&gt;, CliError&gt;</code> — <code>TOTP_CLI_SECRET_STORE=file</code> → FileStore; unset or <code>keyring</code> → KeyringStore on macOS/Windows, Store error elsewhere; any other value → Usage error.</li>
 <li><code>pub const SECRETS_FILE: &amp;str = "secrets.toml";</code></li>
 </ul>
-<li class="step">[ ] <strong>Step 1: Write the failing tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 1: Write the failing tests</strong></li>
 </ul>
 <pre><code class="lang-rust">#[cfg(test)]
 mod tests {
@@ -1043,9 +1043,9 @@ mod tests {
     }
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 2: Run to verify failure</strong></li>
 <p>Run: <code>cargo test --lib store</code> Expected: compile error, <code>FileStore</code> not found.</p>
-<li class="step">[ ] <strong>Step 3: Implement</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 3: Implement</strong></li>
 </ul>
 <pre><code class="lang-rust">use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1205,9 +1205,9 @@ fn restrict_permissions(_path: &amp;Path) -&gt; Result&lt;(), CliError&gt; {
 }</code></pre>
 <p>Add <code>pub mod store;</code> to <code>src/lib.rs</code>. If <code>keyring::Entry::new</code> on Linux without a backend fails to compile (it should not; the crate compiles with no platform features and errors at runtime), gate the whole <code>KeyringStore</code> impl behind the same <code>cfg</code> as <code>open()</code> and return the Store error from <code>open_store</code> instead.</p>
 <ul>
-<li class="step">[ ] <strong>Step 4: Run tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 4: Run tests</strong></li>
 <p>Run: <code>cargo test --lib store</code> Expected: 5 passed (4 on Windows).</p>
-<li class="step">[ ] <strong>Step 5: Commit</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 5: Commit</strong></li>
 </ul>
 <pre><code class="lang-bash">git add src/store.rs src/lib.rs
 git commit -m "Add SecretStore trait with keyring and file-backed implementations
@@ -1230,7 +1230,7 @@ Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
 <li><code>commands::list::run(config_dir: &amp;Path) -&gt; Result&lt;Outcome, CliError&gt;</code></li>
 <li>Later tasks add <code>Command::Code</code>, <code>Command::Remove</code>, <code>Command::Skill</code>, <code>Command::Update</code> to the <code>Command</code> enum and matching arms in <code>run_command</code>.</li>
 </ul>
-<li class="step">[ ] <strong>Step 1: Write tests/common/mod.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 1: Write tests/common/mod.rs</strong></li>
 </ul>
 <pre><code class="lang-rust">use std::path::Path;
 
@@ -1268,7 +1268,7 @@ impl TestEnv {
     }
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 2: Write the failing integration tests in tests/add_commands.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 2: Write the failing integration tests in tests/add_commands.rs</strong></li>
 </ul>
 <pre><code class="lang-rust">mod common;
 
@@ -1363,9 +1363,9 @@ fn json_errors_are_structured_on_stderr() {
         .stderr(predicate::str::contains("\"exit_code\":2"));
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 3: Run to verify failure</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 3: Run to verify failure</strong></li>
 <p>Run: <code>cargo test --test add_commands</code> Expected: compile error (<code>totp_cli::cli</code> missing) or binary build failure.</p>
-<li class="step">[ ] <strong>Step 4: Write src/output.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 4: Write src/output.rs</strong></li>
 </ul>
 <pre><code class="lang-rust">use serde_json::Value;
 
@@ -1386,7 +1386,7 @@ impl Outcome {
     }
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 5: Write src/cli.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 5: Write src/cli.rs</strong></li>
 </ul>
 <pre><code class="lang-rust">use clap::{Parser, Subcommand};
 
@@ -1484,7 +1484,7 @@ fn report_error(error: &amp;CliError, as_json: bool) {
     }
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 6: Write src/commands/mod.rs, add.rs, list.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 6: Write src/commands/mod.rs, add.rs, list.rs</strong></li>
 <p><code>src/commands/mod.rs</code>:</p>
 </ul>
 <pre><code class="lang-rust">pub mod add;
@@ -1610,9 +1610,9 @@ pub mod totp;</code></pre>
 }</code></pre>
 <p>Note on the <code>add_json_reports_the_stored_parameters</code> expectation: <code>serde_json::Value</code>'s <code>Display</code> prints object keys in alphabetical order only when the <code>preserve_order</code> feature is off, which is the default. Keep it off.</p>
 <ul>
-<li class="step">[ ] <strong>Step 7: Run the tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 7: Run the tests</strong></li>
 <p>Run: <code>cargo test</code> Expected: all unit tests plus 7 integration tests pass.</p>
-<li class="step">[ ] <strong>Step 8: Lint and commit</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 8: Lint and commit</strong></li>
 <p>Run: <code>cargo fmt &amp;&amp; cargo clippy --all-targets -- -D warnings</code></p>
 </ul>
 <pre><code class="lang-bash">git add src tests
@@ -1633,7 +1633,7 @@ Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
 <li><code>commands::code::run(args: &amp;CodeArgs, config_dir: &amp;Path, store: &amp;dyn SecretStore) -&gt; Result&lt;Outcome, CliError&gt;</code></li>
 <li><code>commands::code::effective_time(now: u64, period: u64, min_remaining: u64) -&gt; u64</code> (pure; returns <code>now</code>, or the start of the next period when the current code expires too soon).</li>
 </ul>
-<li class="step">[ ] <strong>Step 1: Write the failing tests in tests/code_commands.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 1: Write the failing tests in tests/code_commands.rs</strong></li>
 </ul>
 <pre><code class="lang-rust">mod common;
 
@@ -1732,9 +1732,9 @@ fn code_without_at_uses_the_clock_and_prints_six_digits() {
     let _ = RFC_SECRET;
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 2: Run to verify failure</strong></li>
 <p>Run: <code>cargo test --test code_commands</code> Expected: failures, <code>code</code> is an unknown subcommand (clap exit 2 on every test).</p>
-<li class="step">[ ] <strong>Step 3: Add CodeArgs and dispatch in src/cli.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 3: Add CodeArgs and dispatch in src/cli.rs</strong></li>
 <p>Add to the <code>Command</code> enum:</p>
 </ul>
 <pre><code class="lang-rust">    /// Print the current code for a stored account
@@ -1757,7 +1757,7 @@ pub struct CodeArgs {
             commands::code::run(args, &amp;config_dir, store.as_ref())
         }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 4: Write src/commands/code.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 4: Write src/commands/code.rs</strong></li>
 </ul>
 <pre><code class="lang-rust">use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -1841,9 +1841,9 @@ mod tests {
 }</code></pre>
 <p>Add <code>pub mod code;</code> to <code>src/commands/mod.rs</code>.</p>
 <ul>
-<li class="step">[ ] <strong>Step 5: Run the tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 5: Run the tests</strong></li>
 <p>Run: <code>cargo test</code> Expected: all pass, including 8 new integration tests and 1 new unit test.</p>
-<li class="step">[ ] <strong>Step 6: Lint and commit</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 6: Lint and commit</strong></li>
 <p>Run: <code>cargo fmt &amp;&amp; cargo clippy --all-targets -- -D warnings</code></p>
 </ul>
 <pre><code class="lang-bash">git add src tests
@@ -1859,7 +1859,7 @@ Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
 <p><strong>Interfaces:</strong></p>
 <li>Consumes: <code>Index</code>, <code>SecretStore::delete</code>, <code>Outcome</code>.</li>
 <li>Produces: <code>commands::remove::run(name: &amp;str, config_dir: &amp;Path, store: &amp;dyn SecretStore) -&gt; Result&lt;Outcome, CliError&gt;</code></li>
-<li class="step">[ ] <strong>Step 1: Write the failing tests in tests/list_remove_commands.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 1: Write the failing tests in tests/list_remove_commands.rs</strong></li>
 </ul>
 <pre><code class="lang-rust">mod common;
 
@@ -1909,9 +1909,9 @@ fn remove_succeeds_when_the_secret_is_already_gone() {
     env.cmd().arg("list").assert().success().stdout("");
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 2: Run to verify failure</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 2: Run to verify failure</strong></li>
 <p>Run: <code>cargo test --test list_remove_commands</code> Expected: failures, <code>remove</code> unknown subcommand.</p>
-<li class="step">[ ] <strong>Step 3: Add the subcommand in src/cli.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 3: Add the subcommand in src/cli.rs</strong></li>
 <p>In the <code>Command</code> enum:</p>
 </ul>
 <pre><code class="lang-rust">    /// Delete a stored account and its secret
@@ -1925,7 +1925,7 @@ fn remove_succeeds_when_the_secret_is_already_gone() {
             commands::remove::run(name, &amp;config_dir, store.as_ref())
         }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 4: Write src/commands/remove.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 4: Write src/commands/remove.rs</strong></li>
 </ul>
 <pre><code class="lang-rust">use std::path::Path;
 
@@ -1951,7 +1951,7 @@ pub fn run(name: &amp;str, config_dir: &amp;Path, store: &amp;dyn SecretStore) -
 }</code></pre>
 <p>Add <code>pub mod remove;</code> to <code>src/commands/mod.rs</code>.</p>
 <ul>
-<li class="step">[ ] <strong>Step 5: Run the tests, lint, commit</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 5: Run the tests, lint, commit</strong></li>
 <p>Run: <code>cargo test &amp;&amp; cargo fmt &amp;&amp; cargo clippy --all-targets -- -D warnings</code> Expected: all pass.</p>
 </ul>
 <pre><code class="lang-bash">git add src tests
@@ -1973,7 +1973,7 @@ Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
 <li><code>commands::skill::resolve_target(dir_override: Option&lt;&amp;Path&gt;, config_base: Option&lt;&amp;Path&gt;, base_exists: bool) -&gt; SkillTarget</code></li>
 <li><code>SkillAction::Install { dir: Option&lt;PathBuf&gt; }</code></li>
 </ul>
-<li class="step">[ ] <strong>Step 1: Write skills/totp-cli/SKILL.md</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 1: Write skills/totp-cli/SKILL.md</strong></li>
 </ul>
 <pre><code class="lang-markdown">---
 name: totp-cli
@@ -2042,7 +2042,7 @@ parameters: `accounts.toml` in the per-user config dir (override with
 `totp-cli update --check` reports a newer release; `totp-cli update` installs it and
 refreshes this skill. `totp-cli skill install [--dir &lt;path&gt;]` rewrites the skill alone.</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 2: Write the failing tests in tests/skill_commands.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 2: Write the failing tests in tests/skill_commands.rs</strong></li>
 </ul>
 <pre><code class="lang-rust">use totp_cli::commands::skill::{self, EMBEDDED_SKILL};
 
@@ -2098,9 +2098,9 @@ fn cli_skill_install_reports_json_path() {
     assert_eq!(json["installed"], true);
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 3: Run to verify failure</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 3: Run to verify failure</strong></li>
 <p>Run: <code>cargo test --test skill_commands</code> Expected: compile error, <code>commands::skill</code> missing.</p>
-<li class="step">[ ] <strong>Step 4: Write src/commands/skill.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 4: Write src/commands/skill.rs</strong></li>
 </ul>
 <pre><code class="lang-rust">use std::path::{Path, PathBuf};
 
@@ -2208,7 +2208,7 @@ mod tests {
     }
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 5: Wire the subcommand in src/cli.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 5: Wire the subcommand in src/cli.rs</strong></li>
 <p>In <code>Command</code>:</p>
 </ul>
 <pre><code class="lang-rust">    /// Install or refresh the bundled agent skill (SKILL.md)
@@ -2234,7 +2234,7 @@ pub enum SkillAction {
 <p>(<code>skill install</code> always prints JSON, like netsuite-cli, so <code>update</code> can parse it.)</p>
 <p>Add <code>pub mod skill;</code> to <code>src/commands/mod.rs</code>.</p>
 <ul>
-<li class="step">[ ] <strong>Step 6: Run tests, lint, commit</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 6: Run tests, lint, commit</strong></li>
 <p>Run: <code>cargo test &amp;&amp; cargo fmt &amp;&amp; cargo clippy --all-targets -- -D warnings</code> Expected: all pass.</p>
 </ul>
 <pre><code class="lang-bash">git add skills src tests
@@ -2249,7 +2249,7 @@ Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
 <li>Modify: <code>src/cli.rs</code> (add <code>Command::Update { check: bool, skip_skill: bool }</code>), <code>src/commands/mod.rs</code> (add <code>pub mod update;</code>)</li>
 <p><strong>Interfaces:</strong></p>
 <li>Produces: <code>commands::update::run(check_only: bool, skip_skill: bool) -&gt; Result&lt;serde_json::Value, CliError&gt;</code>; constants <code>REPO_OWNER = "CreativePlanningBusinessServices"</code>, <code>REPO_NAME = "totp-cli"</code>.</li>
-<li class="step">[ ] <strong>Step 1: Write src/commands/update.rs with its unit tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 1: Write src/commands/update.rs with its unit tests</strong></li>
 </ul>
 <pre><code class="lang-rust">use std::path::Path;
 
@@ -2371,7 +2371,7 @@ mod tests {
     }
 }</code></pre>
 <ul>
-<li class="step">[ ] <strong>Step 2: Wire it in src/cli.rs</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 2: Wire it in src/cli.rs</strong></li>
 <p>In <code>Command</code>:</p>
 </ul>
 <pre><code class="lang-rust">    /// Download and install the latest release from GitHub (then refresh the skill)
@@ -2390,11 +2390,11 @@ mod tests {
         }</code></pre>
 <p>Move <code>let config_dir = index::config_dir()?;</code> inside the arms that need it (<code>Add</code>, <code>Code</code>, <code>List</code>, <code>Remove</code>) so <code>update</code> and <code>skill install</code> do not fail on a machine with no config dir. Add <code>pub mod update;</code> to <code>src/commands/mod.rs</code>.</p>
 <ul>
-<li class="step">[ ] <strong>Step 3: Run the tests</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 3: Run the tests</strong></li>
 <p>Run: <code>cargo test &amp;&amp; cargo fmt &amp;&amp; cargo clippy --all-targets -- -D warnings</code> Expected: all pass. <code>totp-cli update --check</code> is not tested against the network; it is verified manually in Task 12 after the first release exists.</p>
-<li class="step">[ ] <strong>Step 4: Write README.md</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 4: Write README.md</strong></li>
 <p>Cover, in this order and in the style of netsuite-cli's README: one-paragraph purpose; Install (release zip via <code>gh release download -R CreativePlanningBusinessServices/totp-cli --pattern "*aarch64-apple-darwin*"</code>, or <code>cargo install --git https://github.com/CreativePlanningBusinessServices/totp-cli</code>); Quick start (<code>add</code>, <code>code</code>, <code>list</code>, <code>remove</code> with real example output); Automation notes (<code>--min-remaining</code>, <code>--json</code> shapes, exit code table); Storage (keychain / Credential Manager, <code>accounts.toml</code> location per OS, <code>TOTP_CLI_CONFIG_DIR</code>, <code>TOTP_CLI_SECRET_STORE=file</code> labelled unencrypted); the one-time keychain "Always Allow" dialog on macOS after a rebuild; Updating (<code>update --check</code>, <code>update</code>, skill refresh); Agent skill (<code>skill install</code>); Development (<code>cargo test</code>, workflows). Every command example must be copy-paste correct against the implemented CLI.</p>
-<li class="step">[ ] <strong>Step 5: Commit</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 5: Commit</strong></li>
 </ul>
 <pre><code class="lang-bash">git add src README.md
 git commit -m "Add self-update command and README
@@ -2405,7 +2405,7 @@ Co-Authored-By: Claude Fable 5.1 &lt;noreply@anthropic.com&gt;"</code></pre>
 <p>This task is the one that goes outward. It runs only after Jon has approved this plan; approval of the plan is the go-ahead for <code>gh repo create</code>.</p>
 <p><strong>Files:</strong> none new.</p>
 <ul>
-<li class="step">[ ] <strong>Step 1: Create the public repo and push</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 1: Create the public repo and push</strong></li>
 </ul>
 <pre><code class="lang-bash">cd ~/projects/creativeplanning/totp-cli
 gh repo create CreativePlanningBusinessServices/totp-cli --public --source . --remote origin \
@@ -2413,14 +2413,14 @@ gh repo create CreativePlanningBusinessServices/totp-cli --public --source . --r
 gh run watch "$(gh run list --limit 1 --json databaseId --jq '.[0].databaseId')" --exit-status   # CI: 3 OSes + lint</code></pre>
 <p>Expected: CI green on macOS, Windows and Linux. If Windows fails, fix on main before tagging.</p>
 <ul>
-<li class="step">[ ] <strong>Step 2: Tag and release v0.1.0</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 2: Tag and release v0.1.0</strong></li>
 </ul>
 <pre><code class="lang-bash">git tag v0.1.0 &amp;&amp; git push origin v0.1.0
 sleep 20 &amp;&amp; gh run watch "$(gh run list --workflow Release --limit 1 --json databaseId --jq '.[0].databaseId')" --exit-status
 gh release view v0.1.0 --json assets --jq '.assets[].name'</code></pre>
 <p>Expected: three zips named <code>totp-cli-v0.1.0-&lt;target&gt;.zip</code>.</p>
 <ul>
-<li class="step">[ ] <strong>Step 3: Install the release binary on this Mac and verify the keychain path end to end</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 3: Install the release binary on this Mac and verify the keychain path end to end</strong></li>
 </ul>
 <pre><code class="lang-bash">cd "$(mktemp -d)" &amp;&amp; gh release download v0.1.0 -R CreativePlanningBusinessServices/totp-cli --pattern "*aarch64-apple-darwin*"
 unzip -o totp-cli-*.zip &amp;&amp; install -m 0755 totp-cli "$HOME/.local/bin/" &amp;&amp; cd - &gt;/dev/null
@@ -2436,7 +2436,7 @@ totp-cli update --check
 totp-cli skill install              # expect installed:true under ~/.claude/skills/totp-cli</code></pre>
 <p>Expected: codes match, the keychain item appears and disappears, <code>update --check</code> reports <code>updateAvailable:false</code>, the skill lands in <code>~/.claude/skills/totp-cli/SKILL.md</code>. macOS may show one keychain dialog on the first <code>code</code>; click Always Allow. If <code>~/.local/bin</code> is not on PATH, use <code>/opt/homebrew/bin</code> like netsuite-cli.</p>
 <ul>
-<li class="step">[ ] <strong>Step 4: Windows check</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 4: Windows check</strong></li>
 <p>Jon has no Windows machine in this session. CI on <code>windows-latest</code> covers compile plus the full file-store test suite. Record in the Basecamp comment (Task 13) that the Credential Manager path is compiled but not yet exercised by hand, and ask Jon to run the Step 3 commands (minus <code>security</code>) on a Windows box when convenient.</p>
 </ul>
 <hr>
@@ -2444,7 +2444,7 @@ totp-cli skill install              # expect installed:true under ~/.claude/skil
 <p><strong>Files:</strong></p>
 <ul>
 <li>Modify: <code>~/.claude/CLAUDE.md</code> (NetSuite section, the 2FA bullet)</li>
-<li class="step">[ ] <strong>Step 1: Edit the 2FA bullet in ~/.claude/CLAUDE.md</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 1: Edit the 2FA bullet in ~/.claude/CLAUDE.md</strong></li>
 <p>Replace the bullet that begins "Only when the 30-day device trust has lapsed will it hit <strong>2FA</strong>" with:</p>
 </ul>
 <pre><code class="lang-markdown">- Only when the 30-day device trust has lapsed will it hit **2FA**. Fetch the code yourself:
@@ -2454,7 +2454,7 @@ totp-cli skill install              # expect installed:true under ~/.claude/skil
   guess. The vault has the password; totp-cli has the TOTP secret once Jon enrols it.</code></pre>
 <p>Also add one line to the NetSuite section's tooling notes: "<code>totp-cli</code> (installed on PATH; usage skill <code>totp-cli</code> in ~/.claude/skills) holds TOTP secrets in the macOS keychain."</p>
 <ul>
-<li class="step">[ ] <strong>Step 2: Tell Jon how to enrol the NetSuite secret</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 2: Tell Jon how to enrol the NetSuite secret</strong></li>
 <p>Jon does this himself; it needs NetSuite's 2FA reset flow (Settings portlet → Security → Two-Factor Authentication → reset) which shows a QR code and a text secret. Command:</p>
 </ul>
 <pre><code class="lang-bash">totp-cli add netsuite --issuer NetSuite      # prompts for the secret without echo
@@ -2462,9 +2462,9 @@ totp-cli skill install              # expect installed:true under ~/.claude/skil
 totp-cli add netsuite --uri 'otpauth://totp/...'</code></pre>
 <p>He should also scan the same QR into his phone app so both stay in sync.</p>
 <ul>
-<li class="step">[ ] <strong>Step 3: Comment on Basecamp todo 520905368</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 3: Comment on Basecamp todo 520905368</strong></li>
 <p>Post a comment (via the Basecamp2 MCP <code>basecamp_create_comment</code>, project 8218129, todo 520905368) with: repo URL, release URL, the install one-liner, the enrol command, what changed in CLAUDE.md, and the note that Windows Credential Manager is compiled and CI-tested but not yet exercised by hand. Do not mark the todo complete; Jon decides.</p>
-<li class="step">[ ] <strong>Step 4: Save a memory note</strong></li>
+<li class="step"><span class="box">&#9744;</span> <strong>Step 4: Save a memory note</strong></li>
 <p>Write a <code>project</code> memory in the memory dir: totp-cli exists, where it lives, that <code>totp-cli code netsuite</code> is the 2FA path once enrolled, and that enrolment is Jon's step. Add the index line to <code>MEMORY.md</code>.</p>
 </ul>
 <div class="choice-panel">
